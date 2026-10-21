@@ -188,6 +188,9 @@
   })();
   </script>
 
+  <!-- Optional Google sign-in, Gmail bill scanning and Drive reports (see google-workspace.js).
+       Google's own scripts load only when you use these features. -->
+  <script src="./google-workspace.js"></script>
   <!-- Recurring subscriptions/bills detection + local reminders (see recurring-scanner.js) -->
   <!-- PDF/CSV statement parsing for the Upload tab (see statement-parser.js) -->
   <script src="./statement-parser.js"></script>
@@ -881,6 +884,7 @@
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState(null);
     const fileRef = useRef();
+    const [gmailFile, setGmailFile] = useState(null);
 
     const existing = kind === 'bank' ? data.accounts.filter(isBankAccount) : data.debts.filter(isCardDebt);
     const accountName = name.trim() || (kind === 'bank' ? subtype : 'Credit Card');
@@ -895,6 +899,10 @@
       } catch (e) { setJob({ file, error: e }); }
       setBusy(false);
     };
+    // A statement attachment from Gmail: set its type and label first, then read it like a picked file.
+    const importFromGmail = (file, k, label) => { setKind(k); setName(label); setGmailFile(file); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+    useEffect(() => { if (gmailFile) { const f = gmailFile; setGmailFile(null); setPassword(''); parse(f); } }, [gmailFile]);
+
     // Signs depend on the statement type, so re-read the file if the user switches type.
     useEffect(() => { if (job && job.report) parse(job.file, password); }, [kind]);
 
@@ -1059,6 +1067,8 @@
             {result.needsApr && <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">Add this card’s APR and minimum payment so payoff plans are accurate. <button className="font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Open Debt</button></p>}
           </Card>
         )}
+
+        {!job && <GmailSync onImportFile={importFromGmail} />}
 
         {!job && !result && (
           <>
@@ -1538,8 +1548,337 @@
           </Card>
         </>}
 
+        <MonthlyReport />
+
         <p className="text-xs text-slate-400 text-center mt-6 px-4">Calculated on this device from your saved data using standard formulas. Debt-to-income uses take-home pay, so it reads higher than a lender’s gross-income figure. Educational estimates, not financial advice.</p>
       </div>
+    );
+  }
+
+  /* ============================================================ GOOGLE */
+  function useGoogle() {
+    const [st, setSt] = useState(() => GoogleWorkspace.getStatus());
+    useEffect(() => GoogleWorkspace.onChange(() => setSt(GoogleWorkspace.getStatus())), []);
+    useEffect(() => { const t = setInterval(() => setSt(GoogleWorkspace.getStatus()), 30000); return () => clearInterval(t); }, []);
+    return st;
+  }
+
+  // Shows a Google error with the right next step: Re-authenticate, Retry, or open Settings.
+  function GoogleErrorNote({ error, onRetry }) {
+    const { connectGoogle, go } = useApp();
+    if (!error) return null;
+    const action = GoogleWorkspace.ERROR_ACTION[error.code] || 'retry';
+    return (
+      <div className="mt-3 rounded-xl border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 p-3">
+        <p className="text-sm text-rose-700 dark:text-rose-300 flex gap-2"><Icon name="TriangleAlert" size={16} className="shrink-0 mt-0.5" /><span>{error.message}</span></p>
+        <div className="flex gap-2 mt-2">
+          {action === 'reconnect' && <Button className="!h-9 !text-sm" onClick={async () => { if (await connectGoogle(true)) onRetry && onRetry(); }}><Icon name="RefreshCw" size={15} />Re-authenticate</Button>}
+          {action === 'retry' && onRetry && <Button variant="secondary" className="!h-9 !text-sm" onClick={onRetry}><Icon name="RotateCw" size={15} />Try again</Button>}
+          {action === 'setup' && <Button variant="secondary" className="!h-9 !text-sm" onClick={() => go('settings')}>Open Settings</Button>}
+        </div>
+      </div>
+    );
+  }
+
+  const GSTATUS = {
+    connected: { dot: 'bg-emerald-500', text: 'Connected' }, expired: { dot: 'bg-amber-500', text: 'Session expired' },
+    connecting: { dot: 'bg-sky-500 animate-pulse', text: 'Connecting…' }, disconnected: { dot: 'bg-slate-400', text: 'Not connected' },
+    'not-configured': { dot: 'bg-slate-300 dark:bg-slate-600', text: 'Set up required' },
+  };
+
+  function GoogleStatusPill({ st }) {
+    const g = GSTATUS[st.status] || GSTATUS.disconnected;
+    return <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800"><i className={cls('w-2 h-2 rounded-full inline-block', g.dot)} />{g.text}</span>;
+  }
+
+  function GoogleSettings() {
+    const { data, setSetting, toast, connectGoogle } = useApp();
+    const st = useGoogle();
+    const [clientId, setClientId] = useState(data.settings.googleClientId || '');
+    const [editing, setEditing] = useState(!data.settings.googleClientId);
+    const saveId = async () => {
+      const id = clientId.trim();
+      if (id && !/^[\w-]+\.apps\.googleusercontent\.com$/.test(id)) return toast('That doesn’t look like a Client ID (…apps.googleusercontent.com)', 'error');
+      await setSetting('googleClientId', id); setEditing(false); toast(id ? 'Client ID saved' : 'Client ID removed');
+    };
+    const scope = (ok, label) => <span className={cls('inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-md', ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800')}><Icon name={ok ? 'Check' : 'Minus'} size={12} />{label}</span>;
+    return (
+      <>
+        <SectionTitle action={<GoogleStatusPill st={st} />}>Google account</SectionTitle>
+        <Card className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl grid place-items-center bg-slate-100 dark:bg-slate-800"><Icon name="Mail" size={18} /></div>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium truncate">{st.status === 'connected' ? (st.email || 'Google account') : st.status === 'expired' ? 'Session expired' : 'Gmail & Google Drive'}</p>
+              <p className="text-xs text-slate-500">{st.status === 'connected' ? `Session ends in ${st.expiresInMinutes} min` : st.status === 'expired' ? 'Re-authenticate to keep using Gmail and Drive' : 'Scan bills from Gmail and save monthly reports to Drive'}</p>
+            </div>
+          </div>
+          {(st.status === 'connected' || st.status === 'expired') && <div className="flex flex-wrap gap-1.5 mt-3">{scope(st.scopes.gmail, 'Gmail (read-only)')}{scope(st.scopes.drive, 'Drive (app files only)')}</div>}
+
+          {st.configured && !editing && (
+            <div className="flex gap-2 mt-4">
+              {st.status === 'connected' && <Button variant="secondary" className="flex-1" onClick={async () => { await GoogleWorkspace.disconnect(); toast('Google disconnected'); }}>Disconnect</Button>}
+              {st.status === 'expired' && <><Button className="flex-[2]" onClick={() => connectGoogle(true)}><Icon name="RefreshCw" size={16} />Re-authenticate</Button><Button variant="secondary" className="flex-1" onClick={() => GoogleWorkspace.disconnect()}>Disconnect</Button></>}
+              {(st.status === 'disconnected' || st.status === 'connecting') && <Button className="flex-1" disabled={st.status === 'connecting'} onClick={() => connectGoogle(false)}><Icon name="LogIn" size={16} />Connect Google Account</Button>}
+            </div>
+          )}
+          {st.lastError && st.lastError.code !== 'TOKEN_EXPIRED' && st.status !== 'connected' && <p className="text-xs text-rose-600 dark:text-rose-400 mt-2">{st.lastError.message}</p>}
+
+          {editing ? (
+            <div className="mt-4 space-y-3">
+              <Field label="OAuth Client ID" hint="Not secret: it only identifies your app to Google. No client secret is used.">
+                <Input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="123456789-abc.apps.googleusercontent.com" autoComplete="off" spellCheck={false} />
+              </Field>
+              <div className="flex gap-2"><Button className="flex-1" onClick={saveId}>Save Client ID</Button>{data.settings.googleClientId && <Button variant="secondary" onClick={() => { setClientId(data.settings.googleClientId); setEditing(false); }}>Cancel</Button>}</div>
+              <details className="text-sm text-slate-600 dark:text-slate-300 rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3" open={!data.settings.googleClientId}>
+                <summary className="font-semibold cursor-pointer">How to get a Client ID (5 minutes, free)</summary>
+                <ol className="list-decimal pl-5 mt-2 space-y-1.5">
+                  <li>Open <a className="text-brand-700 dark:text-brand-400 underline" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">Google Cloud Console → Credentials</a> and create a project.</li>
+                  <li>Under <b>APIs &amp; Services → Library</b>, enable the <b>Gmail API</b> and <b>Google Drive API</b>.</li>
+                  <li>Under <b>OAuth consent screen</b>, choose <b>External</b>, keep it in <b>Testing</b>, and add your Gmail address as a <b>test user</b>.</li>
+                  <li>Under <b>Credentials → Create credentials → OAuth client ID</b>, choose <b>Web application</b> and add <code className="text-xs bg-white dark:bg-slate-900 px-1 rounded">{location.origin}</code> to <b>Authorized JavaScript origins</b>.</li>
+                  <li>Copy the Client ID here.</li>
+                </ol>
+              </details>
+            </div>
+          ) : (
+            <button className="text-xs font-semibold text-brand-700 dark:text-brand-400 mt-3" onClick={() => setEditing(true)}>Change Client ID</button>
+          )}
+          <p className="text-xs text-slate-500 mt-3">The sign-in token stays in this tab’s session storage and expires after about an hour. Emails are read inside your browser; the only server contacted is Google’s.</p>
+        </Card>
+      </>
+    );
+  }
+
+  /* ----- Gmail bill scanner (Upload screen) ----- */
+  const EMAIL_KIND = {
+    bill: { label: 'Bill', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300' },
+    'card-statement': { label: 'Card bill', cls: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' },
+    statement: { label: 'Statement', cls: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' },
+    paid: { label: 'Paid', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' },
+    other: { label: 'Email', cls: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
+  };
+
+  function GmailSync({ onImportFile }) {
+    const { data, save, setSetting, toast, fmt, connectGoogle, go } = useApp();
+    const st = useGoogle();
+    const [days, setDays] = useState('30');
+    const [busy, setBusy] = useState(false);
+    const [progress, setProgress] = useState(null);
+    const [items, setItems] = useState(null);
+    const [error, setError] = useState(null);
+    const [showHandled, setShowHandled] = useState(false);
+    const handled = data.settings.gmailHandled || {};
+
+    const scan = async () => {
+      setError(null); setBusy(true); setProgress(null);
+      try {
+        const live = GoogleWorkspace.getStatus().status; // fresh, not the value captured at render time
+        if (live !== 'connected') { const ok = await connectGoogle(live === 'expired'); if (!ok) { setBusy(false); return; } }
+        const found = await GoogleWorkspace.gmail.scanBills({ days: Number(days), onProgress: (d, n) => setProgress(`Reading ${d} of ${n} emails…`) });
+        setItems(found);
+        toast(found.length ? `Found ${found.length} financial email${found.length === 1 ? '' : 's'}` : 'No bills or statements found');
+      } catch (e) { setError(e); }
+      setBusy(false); setProgress(null);
+    };
+    const mark = (id, how) => setSetting('gmailHandled', { ...handled, [id]: how });
+    const existingBill = (r) => data.bills.find((b) => b.gmailMessageId === r.id || (RecurringScanner.merchantKey(b.name) === RecurringScanner.merchantKey(r.merchant) && Math.abs(Number(b.amount) - (r.amount || 0)) <= Math.max(1, 0.4 * (r.amount || 0))));
+    const addBill = async (r) => {
+      const due = r.dueDate ? parseISO(r.dueDate) : new Date();
+      const guess = StatementParser.categorize(`${r.merchant} ${r.subject}`, -1);
+      const category = r.kind === 'card-statement' ? 'Debt Payment' : guess === 'Dining Out' ? 'Dining' : EXPENSE_CATEGORIES.includes(guess) ? guess : 'Utilities';
+      await save('bills', { name: r.merchant, amount: r.amount, dueDay: due.getDate(), dueMonth: due.getMonth() + 1, frequency: 'monthly', category, isSubscription: category === 'Subscriptions', active: true,
+        // A card bill is paid from the bank as a transfer; logging it as an expense would count the card's purchases twice.
+        logExpense: r.kind !== 'card-statement', source: 'gmail', gmailMessageId: r.id });
+      await mark(r.id, 'added'); toast(`${r.merchant} added to Bills`);
+    };
+    const importAttachment = async (r, att) => {
+      setBusy(true); setError(null);
+      try { const file = await GoogleWorkspace.gmail.attachment(r.id, att); await mark(r.id, 'imported'); onImportFile(file, r.kind === 'card-statement' ? 'credit' : 'bank', r.merchant); }
+      catch (e) { setError(e); }
+      setBusy(false);
+    };
+
+    const visible = (items || []).filter((r) => showHandled || !handled[r.id]);
+    const hiddenCount = (items || []).length - visible.length;
+
+    return (
+      <>
+        <SectionTitle action={<GoogleStatusPill st={st} />}>Sync from Gmail</SectionTitle>
+        <Card className="p-4">
+          {!st.configured ? (
+            <div className="text-sm text-slate-600 dark:text-slate-300">Find bills and statements in your recent email and add them here. Needs a one-time Google setup.
+              <div className="mt-3"><Button variant="secondary" onClick={() => go('settings')}>Set up Google in Settings</Button></div></div>
+          ) : (
+            <>
+              <p className="text-sm text-slate-600 dark:text-slate-300">Looks for emails with “statement”, “bill” or “invoice” in the subject and reads amounts and due dates on this device.</p>
+              <div className="flex gap-2 mt-3 items-center">
+                <div className="flex-1"><Segmented value={days} onChange={setDays} options={[{ value: '30', label: '30 days' }, { value: '60', label: '60 days' }, { value: '90', label: '90 days' }]} /></div>
+              </div>
+              <Button className="w-full mt-3" disabled={busy} onClick={scan}><Icon name={busy ? 'Hourglass' : 'Mail'} size={16} />{busy ? (progress || 'Working…') : st.status === 'connected' ? 'Sync from Gmail' : 'Connect & sync from Gmail'}</Button>
+              <GoogleErrorNote error={error} onRetry={scan} />
+            </>
+          )}
+        </Card>
+
+        {items && (
+          <Card className="mt-3 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+            {visible.length === 0 && <p className="p-4 text-sm text-slate-500">{items.length ? 'Everything found has been handled.' : `No bills or statements in the last ${days} days.`}</p>}
+            {visible.map((r) => {
+              const k = EMAIL_KIND[r.kind] || EMAIL_KIND.other; const inBills = existingBill(r); const done = handled[r.id];
+              return (
+                <div key={r.id} className={cls('p-3.5', done && 'opacity-60')}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-medium flex items-center gap-1.5 min-w-0"><span className="truncate">{r.merchant}</span><span className={cls('text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0', k.cls)}>{k.label}</span></p>
+                      <p className="text-xs text-slate-500 truncate">{r.subject}</p>
+                    </div>
+                    {r.amount != null && <p className="num font-semibold shrink-0">{fmt(r.amount)}</p>}
+                  </div>
+                  <p className="text-xs mt-1 text-slate-500">
+                    {r.dueDate ? <span className={cls(r.pending ? 'text-amber-700 dark:text-amber-400 font-medium' : '')}>{r.pending ? `Due ${prettyDate(r.dueDate)}` : `Was due ${prettyDate(r.dueDate)}`}</span> : r.kind === 'paid' ? 'Payment confirmation' : 'No due date found'}
+                    {r.minimumDue != null && ` · minimum ${fmt(r.minimumDue)}`} · received {prettyDate(r.sentAt.slice(0, 10))}
+                  </p>
+                  <div className="flex flex-wrap gap-2 mt-2.5">
+                    {done ? <span className="text-xs font-semibold text-slate-500">{done === 'added' ? 'Added to Bills' : done === 'imported' ? 'Attachment imported' : 'Ignored'}</span> : <>
+                      {(r.kind === 'bill' || r.kind === 'card-statement') && r.amount != null && (inBills
+                        ? <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1"><Icon name="CircleCheck" size={14} />Already in Bills</span>
+                        : <Button className="!h-8 !px-3 !text-xs" onClick={() => addBill(r)}><Icon name="Plus" size={14} />Add as bill</Button>)}
+                      {r.attachments.map((a) => <Button key={a.attachmentId || a.filename} variant="secondary" className="!h-8 !px-3 !text-xs max-w-full" disabled={busy} onClick={() => importAttachment(r, a)}><Icon name="Paperclip" size={14} /><span className="truncate">Import {a.filename}</span></Button>)}
+                      <Button variant="ghost" className="!h-8 !px-2 !text-xs" onClick={() => mark(r.id, 'ignored')}>Ignore</Button>
+                    </>}
+                  </div>
+                </div>
+              );
+            })}
+            {hiddenCount > 0 && <button className="w-full p-3 text-xs font-semibold text-brand-700 dark:text-brand-400" onClick={() => setShowHandled(true)}>Show {hiddenCount} already handled</button>}
+          </Card>
+        )}
+      </>
+    );
+  }
+
+  /* ----- Monthly report + Google Drive (Advisor screen) ----- */
+  function parseCsvSimple(text) {
+    const rows = []; let row = [], f = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+      else if (c === '"') q = true; else if (c === ',') { row.push(f); f = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
+      else f += c;
+    }
+    if (f || row.length) { row.push(f); rows.push(row); }
+    return rows.filter((r) => r.some((v) => v !== ''));
+  }
+  // Small Markdown renderer for the reports this app writes: headings, tables, lists, **bold**, _italic_.
+  function inlineMd(s) { return s.split(/(\*\*[^*]+\*\*|_[^_]+_)/g).map((p, i) => p.startsWith('**') ? <b key={i}>{p.slice(2, -2)}</b> : /^_[^_]+_$/.test(p) ? <i key={i}>{p.slice(1, -1)}</i> : p); }
+  function MarkdownView({ text }) {
+    const lines = String(text).split('\n'); const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^\|/.test(l)) {
+        const block = []; while (i < lines.length && /^\|/.test(lines[i])) block.push(lines[i++]); i--;
+        const cells = (r) => r.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+        const [head, sep, ...body] = block; const right = cells(sep || '').map((c) => /:$/.test(c));
+        out.push(<div key={i} className="overflow-x-auto my-3"><table className="w-full text-sm"><thead><tr>{cells(head).map((c, j) => <th key={j} className={cls('py-1.5 px-2 border-b border-slate-200 dark:border-slate-700 font-semibold', right[j] ? 'text-right' : 'text-left')}>{inlineMd(c)}</th>)}</tr></thead>
+          <tbody>{body.map((r, k) => <tr key={k} className="border-b border-slate-100 dark:border-slate-800">{cells(r).map((c, j) => <td key={j} className={cls('py-1.5 px-2 num', right[j] ? 'text-right' : 'text-left')}>{inlineMd(c)}</td>)}</tr>)}</tbody></table></div>);
+      } else if (/^# /.test(l)) out.push(<h2 key={i} className="text-xl font-bold mt-1">{inlineMd(l.slice(2))}</h2>);
+      else if (/^## /.test(l)) out.push(<h3 key={i} className="text-base font-bold mt-5">{inlineMd(l.slice(3))}</h3>);
+      else if (/^- /.test(l)) out.push(<li key={i} className="ml-5 list-disc text-sm">{inlineMd(l.slice(2))}</li>);
+      else if (l.trim()) out.push(<p key={i} className="text-sm text-slate-600 dark:text-slate-300 mt-2">{inlineMd(l)}</p>);
+    }
+    return <div>{out}</div>;
+  }
+  function ReportView({ name, text }) {
+    if (/\.csv$/i.test(name)) {
+      const rows = parseCsvSimple(text);
+      return <div className="overflow-x-auto"><table className="w-full text-xs"><tbody>{rows.map((r, i) => <tr key={i} className={cls('border-b border-slate-100 dark:border-slate-800', i === 0 && 'font-semibold')}>{r.map((c, j) => <td key={j} className={cls('py-1.5 px-2 align-top', j === 3 && 'text-right num')}>{c}</td>)}</tr>)}</tbody></table></div>;
+    }
+    return <MarkdownView text={text} />;
+  }
+
+  function MonthlyReport() {
+    const { data, fmt, toast, connectGoogle } = useApp();
+    const st = useGoogle();
+    const [month, setMonth] = useState(addMonths(monthKey(todayISO()), new Date().getDate() <= 5 ? -1 : 0));
+    const [format, setFormat] = useState('md');
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState(null);
+    const [saved, setSaved] = useState(null);
+    const [reports, setReports] = useState(null);
+    const [listError, setListError] = useState(null);
+    const [viewer, setViewer] = useState(null); // { name, text, link }
+    const name = GoogleWorkspace.drive.reportName(month, format);
+    const build = () => GoogleWorkspace.buildMonthlyReport(data, month, format);
+
+    const refresh = useCallback(async () => {
+      setListError(null);
+      try { setReports(await GoogleWorkspace.drive.listReports()); } catch (e) { setListError(e); }
+    }, []);
+    useEffect(() => { if (st.status === 'connected' && st.scopes.drive && reports == null) refresh(); }, [st.status]);
+
+    const saveToDrive = async () => {
+      setError(null); setSaved(null); setBusy(true);
+      try {
+        const live = GoogleWorkspace.getStatus().status; // fresh, not the value captured at render time
+        if (live !== 'connected') { const ok = await connectGoogle(live === 'expired'); if (!ok) { setBusy(false); return; } }
+        const file = await GoogleWorkspace.drive.saveReport({ month, format, content: build() });
+        setSaved(file); toast(file.updated ? `Updated ${file.name} in Drive` : `Saved ${file.name} to Drive`);
+        refresh();
+      } catch (e) { setError(e); }
+      setBusy(false);
+    };
+    const openReport = async (f) => {
+      setViewer({ name: f.name, text: null, link: f.webViewLink });
+      try { const text = await GoogleWorkspace.drive.readReport(f.id); setViewer({ name: f.name, text, link: f.webViewLink }); }
+      catch (e) { setViewer(null); setListError(e); }
+    };
+
+    return (
+      <>
+        <SectionTitle>Monthly report</SectionTitle>
+        <Card className="p-4">
+          <div className="flex items-center justify-between">
+            <button className="w-9 h-9 grid place-items-center rounded-xl bg-slate-100 dark:bg-slate-800" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" size={18} /></button>
+            <div className="text-center"><p className="font-semibold">{monthLabel(month)}</p><p className="text-[11px] text-slate-500 break-all">{name}</p></div>
+            <button className="w-9 h-9 grid place-items-center rounded-xl bg-slate-100 dark:bg-slate-800" onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" size={18} /></button>
+          </div>
+          <div className="mt-3"><Segmented value={format} onChange={setFormat} options={[{ value: 'md', label: 'Markdown' }, { value: 'csv', label: 'CSV' }]} /></div>
+          <p className="text-xs text-slate-500 mt-2">Income, bank balances, credit card debt, subscriptions and spending by category.</p>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <Button variant="secondary" onClick={() => setViewer({ name, text: build(), preview: true })}><Icon name="Eye" size={16} />Preview</Button>
+            <Button variant="secondary" onClick={() => download(name, build(), format === 'csv' ? 'text/csv' : 'text/markdown')}><Icon name="Download" size={16} />Download</Button>
+          </div>
+          <Button className="w-full mt-2" disabled={busy || !st.configured} onClick={saveToDrive}><Icon name={busy ? 'Hourglass' : 'CloudUpload'} size={16} />{busy ? 'Saving…' : 'Save Monthly Report to Drive'}</Button>
+          {!st.configured && <p className="text-xs text-slate-500 mt-2">Set up Google in Settings to save reports to Drive.</p>}
+          {saved && <p className="text-sm mt-3 flex gap-2 items-center text-emerald-700 dark:text-emerald-400"><Icon name="CircleCheck" size={16} />{saved.updated ? 'Updated' : 'Saved'} {saved.name}{saved.webViewLink && <a className="font-semibold underline ml-auto" href={saved.webViewLink} target="_blank" rel="noopener noreferrer">Open</a>}</p>}
+          <GoogleErrorNote error={error} onRetry={saveToDrive} />
+        </Card>
+
+        {st.configured && (st.status === 'connected' || reports) && <>
+          <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={refresh}>Refresh</button>}>Reports in Google Drive</SectionTitle>
+          <Card className="divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+            {listError ? <div className="p-3"><GoogleErrorNote error={listError} onRetry={refresh} /></div>
+              : reports == null ? <p className="p-4 text-sm text-slate-500">Loading…</p>
+              : reports.length === 0 ? <p className="p-4 text-sm text-slate-500">No reports saved yet. They go in a “Centric Wealth Reports” folder in your Drive.</p>
+              : reports.map((f) => (
+                <div key={f.id} className="flex items-center gap-3 p-3.5">
+                  <button className="flex-1 min-w-0 text-left flex items-center gap-3" onClick={() => openReport(f)}>
+                    <div className="w-10 h-10 rounded-xl grid place-items-center bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300 shrink-0"><Icon name={/\.csv$/i.test(f.name) ? 'FileSpreadsheet' : 'FileText'} size={18} /></div>
+                    <div className="min-w-0"><p className="font-medium truncate">{f.appProperties && f.appProperties.month ? monthLabel(f.appProperties.month) : f.name}<span className="ml-1.5 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 align-middle">{/\.csv$/i.test(f.name) ? 'CSV' : 'MD'}</span></p><p className="text-xs text-slate-500 truncate">{f.name} · saved {prettyDate(f.modifiedTime.slice(0, 10))}</p></div>
+                  </button>
+                  {f.webViewLink && <a href={f.webViewLink} target="_blank" rel="noopener noreferrer" className="w-9 h-9 grid place-items-center rounded-lg text-slate-500" aria-label={`Open ${f.name} in Google Drive`}><Icon name="ExternalLink" size={16} /></a>}
+                </div>
+              ))}
+          </Card>
+        </>}
+
+        <Sheet open={!!viewer} title={viewer?.preview ? 'Report preview' : viewer?.name || ''} onClose={() => setViewer(null)}>
+          {viewer && (viewer.text == null ? <p className="text-sm text-slate-500">Loading from Drive…</p> : <ReportView name={viewer.name} text={viewer.text} />)}
+          {viewer?.link && <a className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-brand-700 dark:text-brand-400" href={viewer.link} target="_blank" rel="noopener noreferrer"><Icon name="ExternalLink" size={14} />Open in Google Drive</a>}
+        </Sheet>
+      </>
     );
   }
 
@@ -1626,6 +1965,8 @@
             </select>
           </Row>
         </Card>
+
+        <GoogleSettings />
 
         <SectionTitle>Your data</SectionTitle>
         <Card className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1789,7 +2130,14 @@
       } catch (e) { toast(e.message, 'error'); }
     }, [store, toast]);
 
-    const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install, recurring, recurringAction };
+    useEffect(() => { if (ready && window.GoogleWorkspace) GoogleWorkspace.configure({ clientId: data.settings.googleClientId || '' }); }, [ready, data.settings.googleClientId]);
+    // Must be called straight from a click: Google's consent popup is blocked otherwise.
+    const connectGoogle = useCallback(async (reauth) => {
+      try { const r = await GoogleWorkspace.connect({ reauth: !!reauth }); toast(r.scopes.gmail && r.scopes.drive ? `Connected${r.email ? ` as ${r.email}` : ''}` : 'Connected, but some permissions were not granted', r.scopes.gmail && r.scopes.drive ? 'ok' : 'error'); return true; }
+      catch (e) { toast(e.message, 'error'); return false; }
+    }, [toast]);
+
+    const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install, recurring, recurringAction, connectGoogle };
 
     if (!ready) return <div id="boot">Opening Centric Wealth…</div>;
     if (error) return <div className="p-6"><Card className="p-4"><p className="font-semibold text-rose-600">Storage unavailable</p><p className="text-sm text-slate-500 mt-1">{error}. Private-browsing modes in some browsers block IndexedDB.</p></Card></div>;
