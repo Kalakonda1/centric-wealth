@@ -605,7 +605,7 @@
     const bm = text.match(balRe);
     let endingBalance = null;
     if (bm) { const v = parseMoney(bm[1]); if (v) endingBalance = (v.explicitSign < 0 || v.cr) ? -v.value : v.value; }
-    return { rows: out, meta: { statementType: type, dateOrder: order, statementEnd: toISO(ref), endingBalance, endingBalanceDate: endingBalance != null ? toISO(ref) : null } };
+    return { rows: out, meta: { statementType: type, dateOrder: order, statementEnd: toISO(ref), endingBalance, endingBalanceDate: endingBalance != null ? toISO(ref) : null, datedLines: dateSamples.length, looksLikeStatement: /balance|statement|account|payment|deposit|withdrawal|purchase/i.test(text) } };
   }
 
   /* ======================================================================
@@ -947,7 +947,13 @@
     } else {
       ({ rows, meta } = await parseCsvFile(file, { order: opts.dateOrder, invertAmounts: opts.invertAmounts, accountType: opts.accountType, warn, onProgress: opts.onProgress }));
     }
-    if (!rows.length) fail('NO_TRANSACTIONS', `No transactions were found in "${file.name}". ${kind === 'pdf' ? 'The layout may not be supported \u2014 try the CSV download from your bank.' : 'Check that the file has date and amount columns.'}`, { warnings });
+    if (!rows.length) {
+      // A PDF with no lines that start with a date is almost certainly not a statement (a letter, a guide, a receipt).
+      const notStatement = kind === 'pdf' && !meta.datedLines;
+      fail('NO_TRANSACTIONS', notStatement
+        ? `"${file.name}" doesn't look like a bank or credit card statement: it has no lines that start with a date and end with an amount. Download the statement itself from your bank's website (PDF or CSV).`
+        : `No transactions were found in "${file.name}". ${kind === 'pdf' ? 'The layout may not be supported \u2014 try the CSV download from your bank.' : 'Check that the file has date and amount columns.'}`, { warnings, notStatement });
+    }
 
     // Clean + categorise.
     let transactions = rows.map((r) => {
