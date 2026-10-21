@@ -91,6 +91,12 @@
     });
     const loans = Object.values(people).filter((p) => Math.abs(p.owedToYou) > 0.004 || Math.abs(p.youOwe) > 0.004).sort((a, b) => a.name.localeCompare(b.name));
 
+    // Savings funds (Emergency Fund + goals): balances, targets, progress, and this month's deposits.
+    const funds = global.Analytics ? global.Analytics.funds(data) : (data.accounts || []).filter((a) => a.kind === 'fund').map((f) => ({ name: f.name, fundType: f.fundType || 'goal', balance: Number(f.balance) || 0, target: Number(f.target) || 0, progress: f.target ? (Number(f.balance) || 0) / f.target : 0, monthsCovered: null }));
+    const fundMoves = txs.filter((t) => t.accountType === 'fund');
+    const fundsIn = sum(fundMoves.filter((t) => t.direction === 'in'), (t) => Math.abs(t.amount));
+    const fundsOut = sum(fundMoves.filter((t) => t.direction === 'out'), (t) => Math.abs(t.amount));
+
     const [y, m] = month.split('-').map(Number);
     return {
       month, label: `${MONTHS[m - 1]} ${y}`,
@@ -104,6 +110,8 @@
       subscriptionsMonthly: sum(subscriptions, (s) => s.monthly), recurringMonthly: sum(recurring, (s) => s.monthly),
       logs: logs.map((t) => ({ date: String(t.date).slice(0, 10), kind: entryKind(t), kindLabel: KIND_LABEL[entryKind(t)], account: t.accountName || (t.accountType === 'cash' ? 'Cash Wallet' : ''), person: t.counterparty || '', category: t.category || '', description: t.description || '', amount: Math.abs(t.amount), signed: isIn(t) ? Math.abs(t.amount) : -Math.abs(t.amount), counts: t.type !== 'transfer' })),
       logTotals, logCounts, loans,
+      funds, fundsTotal: sum(funds, (f) => f.balance), fundsIn, fundsOut,
+      netWorth: bankTotal + sum(funds, (f) => f.balance) - cardTotal,
     };
   }
 
@@ -151,6 +159,12 @@
       r.categories.forEach((c) => L.push(`| ${esc(c.category)} | ${$(c.total)} | ${$(c.credit)} | ${$(c.bank)} |${hasCash ? ` ${$(c.cash)} |` : ''} ${pct(c.total, r.expenses)} |`));
     } else L.push('No spending recorded this month.');
     L.push('');
+    L.push(`## Savings & emergency fund (${$(r.fundsTotal)})`, '');
+    if (r.funds.length) {
+      L.push('| Fund | Balance | Target | Progress | Note |', '|---|---:|---:|---:|---|');
+      r.funds.forEach((f) => L.push(`| ${esc(f.name)}${f.fundType === 'emergency' ? ' (emergency)' : ''} | ${$(f.balance)} | ${f.target ? $(f.target) : '-'} | ${f.target ? Math.round(f.progress * 100) + '%' : '-'} | ${f.monthsCovered != null && f.fundType === 'emergency' ? `covers ${f.monthsCovered.toFixed(1)} months of essentials` : ''} |`));
+      L.push('', `This month: ${$(r.fundsIn)} added, ${$(r.fundsOut)} withdrawn. Net worth including funds: **${$(r.netWorth)}**.`, '');
+    } else L.push('No savings funds yet.', '');
     L.push('## Cash & transfer log', '');
     L.push('| | Entries | Amount |', '|---|---:|---:|');
     Object.keys(KIND_LABEL).forEach((k) => L.push(`| ${KIND_LABEL[k]} | ${r.logCounts[k]} | ${$(r.logTotals[k])} |`));
@@ -199,6 +213,12 @@
     L.push('SPENDING BY CATEGORY', line());
     if (r.categories.length) L.push(...table(['Category', 'Total', 'Cards', 'Bank', 'Cash'], r.categories.map((c) => [c.category, $(c.total), $(c.credit), $(c.bank), $(c.cash)]), [16, 11, 10, 10, 9]));
     else L.push('No spending recorded this month.');
+    L.push('');
+    L.push('SAVINGS & EMERGENCY FUND', line());
+    if (r.funds.length) {
+      r.funds.forEach((f) => L.push(row(`${f.name}${f.target ? ` (${Math.round(f.progress * 100)}% of ${$(f.target)})` : ''}`, $(f.balance))));
+      L.push(row('Total savings funds', $(r.fundsTotal)), row('Added this month', $(r.fundsIn)), row('Net worth incl. funds', $(r.netWorth)));
+    } else L.push('No savings funds yet.');
     L.push('');
     L.push('CASH & TRANSFER LOG', line());
     Object.keys(KIND_LABEL).forEach((k) => L.push(row(`${KIND_LABEL[k]} (${r.logCounts[k]})`, $(r.logTotals[k]))));
@@ -274,8 +294,9 @@
     const font = (style, size) => { doc.setFont('helvetica', style); doc.setFontSize(size); };
     let y = 0;
     const ensure = (h) => { if (y + h > PH - 18) { doc.addPage(); y = 18; } };
-    const section = (title, subtitle) => {
-      ensure(22); y += 6;
+    // `need` = space the first block after the heading needs, so a heading never sits alone at a page end.
+    const section = (title, subtitle, need = 22) => {
+      ensure(need + 14); y += 6;
       font('bold', 13); color(C.ink); doc.text(pdfText(title), M, y);
       if (subtitle) { font('normal', 8.5); color(C.muted); doc.text(pdfText(subtitle), PW - M, y, { align: 'right' }); }
       y += 2.5; doc.setDrawColor(C.line[0], C.line[1], C.line[2]); doc.setLineWidth(0.3); doc.line(M, y, PW - M, y); y += 5;
@@ -300,7 +321,7 @@
     const cards = [
       { label: 'Total Bank Balances', value: $(r.bankTotal), sub: `${r.banks.length} account${r.banks.length === 1 ? '' : 's'}${r.banks.some((b) => b.type === 'Cash') ? ' incl. cash wallet' : ''}`, accent: C.sky, bg: C.skyBg },
       { label: 'Credit Card Debt', value: $(r.cardTotal), sub: `${r.cards.length} card${r.cards.length === 1 ? '' : 's'}`, accent: C.rose, bg: C.roseBg },
-      { label: 'Net Balance', value: $(r.netBalance), sub: 'bank & cash minus card debt', accent: r.netBalance >= 0 ? C.brand : C.rose, bg: C.slateBg },
+      { label: 'Net Balance', value: $(r.netBalance), sub: r.fundsTotal > 0 ? `+ ${$(r.fundsTotal)} in savings funds` : 'bank & cash minus card debt', accent: r.netBalance >= 0 ? C.brand : C.rose, bg: C.slateBg },
       { label: 'Monthly Income', value: $(r.income), sub: `${r.incomeCount} deposit${r.incomeCount === 1 ? '' : 's'}`, accent: C.brand, bg: C.brandBg },
       { label: 'Monthly Expenses', value: $(r.expenses), sub: `${r.expenseCount} transaction${r.expenseCount === 1 ? '' : 's'}`, accent: C.amber, bg: C.amberBg },
       { label: 'Net Cash Flow', value: $(r.net), sub: r.savingsRate == null ? 'no income recorded' : r.savingsRate < 0 ? 'spending exceeded income' : `saving ${Math.round(r.savingsRate * 100)}% of income`, accent: r.net >= 0 ? C.brand : C.rose, bg: C.slateBg },
@@ -317,23 +338,40 @@
     y += 2 * ch + gap + 2;
 
     // ---- balances by account
-    if (r.banks.length || r.cards.length) {
+    if (r.banks.length || r.cards.length || r.funds.length) {
       section('Balances by account', `as of ${asOf}`);
       table({ ...tableStyle, startY: y,
         head: [['Account', 'Type', 'Balance']],
         body: [
           ...r.banks.map((a) => [pdfText(a.name), a.type === 'Cash' ? 'Cash wallet' : `Bank (${pdfText(a.type)})`, $(a.balance) + (a.estimated ? ' (est.)' : '')]),
           ...r.cards.map((d) => [pdfText(d.name), `Credit card${d.apr ? ` - ${d.apr}% APR` : ''}`, '-' + $(d.balance)]),
+          ...r.funds.map((f) => [pdfText(f.name), f.fundType === 'emergency' ? 'Emergency fund' : 'Savings goal', $(f.balance)]),
         ],
-        foot: [['Net balance', '', $(r.netBalance)]],
+        foot: [['Net balance (bank & cash - cards)', '', $(r.netBalance)], ...(r.funds.length ? [['Net worth incl. savings funds', '', $(r.netWorth)]] : [])],
         footStyles: { fillColor: C.slateBg, textColor: C.ink, fontStyle: 'bold' },
         columnStyles: { 2: { halign: 'right', cellWidth: 40 } },
       });
       y = doc.lastAutoTable.finalY + 4;
     }
 
+    // ---- savings & emergency fund: progress bars
+    if (r.funds.length) {
+      section('Savings & Emergency Fund', `${$(r.fundsTotal)} saved - ${$(r.fundsIn)} added this month`, Math.min(3, r.funds.length) * 16);
+      r.funds.forEach((f) => {
+        ensure(15);
+        const p = Math.max(0, Math.min(1, f.progress || 0)), col = f.fundType === 'emergency' ? C.brand : C.sky;
+        font('bold', 9.5); color(C.ink); doc.text(pdfText(f.name + (f.fundType === 'emergency' ? ' (emergency fund)' : '')), M, y + 3);
+        font('normal', 8.5); color(C.muted);
+        doc.text(f.target ? `${$(f.balance)} of ${$(f.target)}  (${Math.round((f.progress || 0) * 100)}%)` : $(f.balance), PW - M, y + 3, { align: 'right' });
+        fill(C.slateBg); doc.roundedRect(M, y + 5, CW, 3.2, 1.6, 1.6, 'F');
+        if (p > 0) { fill(col); doc.roundedRect(M, y + 5, Math.max(3.2, CW * p), 3.2, 1.6, 1.6, 'F'); }
+        if (f.fundType === 'emergency' && f.monthsCovered != null) { font('normal', 7.5); color(C.muted); doc.text(`Covers ${f.monthsCovered.toFixed(1)} months of essential spending (${$(f.essentials)}/month).`, M, y + 12); y += 4; }
+        y += 12;
+      });
+    }
+
     // ---- category breakdown: stacked bar chart + table
-    section('Category Breakdown', `${r.categories.length} categories - ${$(r.expenses)} spent`);
+    section('Category Breakdown', `${r.categories.length} categories - ${$(r.expenses)} spent`, r.categories.length ? Math.min(10, r.categories.length) * 6.5 + 8 : 10);
     if (!r.categories.length) { font('normal', 9); color(C.muted); doc.text('No spending recorded this month.', M, y + 2); y += 8; }
     else {
       const top = r.categories.slice(0, 10), max = top[0].total, labelW = 38, amtW = 26, barW = CW - labelW - amtW - 4, rowH = 6.5;
@@ -382,7 +420,7 @@
     }
 
     // ---- cash & transfer logs
-    section('Cash & Transfer Logs', `${r.logs.length} manual entr${r.logs.length === 1 ? 'y' : 'ies'} this month`);
+    section('Cash & Transfer Logs', `${r.logs.length} manual entr${r.logs.length === 1 ? 'y' : 'ies'} this month`, 30);
     ensure(20);
     const tiles = [['Cash spent', 'cash-expense', C.amber], ['Cash received', 'cash-income', C.brand], ['Money sent', 'sent', C.rose], ['Money received', 'received', C.sky]];
     const tw = (CW - 3 * gap) / 4;
@@ -411,6 +449,31 @@
         columnStyles: { 1: { halign: 'right', cellWidth: 34 }, 2: { halign: 'right', cellWidth: 34 } },
       });
       y = doc.lastAutoTable.finalY + 4;
+    }
+
+    // ---- chart summary: the Analytics charts, rendered on this device as images
+    if (opts.charts !== false && global.Analytics) {
+      try {
+        const imgs = await global.Analytics.renderImages(data, month, (n, short) => $(n));
+        if (imgs.length) {
+          doc.addPage(); y = 18;
+          section('Chart Summary', 'from the Analytics dashboard');
+          for (const im of imgs) {
+            const legend = im.legendRows;
+            const w = legend ? 70 : CW, h = (im.height / im.width) * w;
+            ensure(h + 14);
+            font('bold', 10); color(C.ink); doc.text(pdfText(im.title), M, y + 2);
+            doc.addImage(im.dataUrl, 'PNG', M, y + 4, w, h, undefined, 'FAST');
+            if (legend) {
+              let ly = y + 12;
+              legend.forEach((l) => { const c = l.color.match(/\w\w/g).map((x) => parseInt(x, 16)); doc.setFillColor(c[0], c[1], c[2]); doc.rect(M + w + 6, ly - 2.6, 3, 3, 'F'); font('normal', 9); color(C.ink); doc.text(pdfText(l.label), M + w + 11, ly); doc.text(`${Math.round(l.share * 100)}%`, PW - M - 28, ly, { align: 'right' }); font('bold', 9); doc.text(l.value, PW - M, ly, { align: 'right' }); ly += 6.5; });
+            } else if (im.caption) { font('normal', 7.5); color(C.muted); doc.text(pdfText(im.caption), M, y + 4 + h + 3.5, { maxWidth: CW }); }
+            y += h + 12;
+          }
+        }
+      } catch (e) {
+        ensure(10); font('italic', 8); color(C.muted); doc.text(pdfText(`Charts could not be added: ${e.message}`), M, y + 4); y += 8;
+      }
     }
 
     // ---- footer on every page

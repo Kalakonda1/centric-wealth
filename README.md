@@ -11,7 +11,8 @@ Everything runs in the browser. Data lives in IndexedDB on the device; there are
 | `statement-parser.js` | PDF/CSV statement import, categorisation and recurring detection |
 | `recurring-scanner.js` | Subscription & bill detection, Keep/Cancel decisions, reminders |
 | `advisor-engine.js` | Health score, 50/30/20 budget and debt payoff maths for the Advisor tab |
-| `monthly-report.js` | Builds the monthly report and downloads it as .md or .txt |
+| `monthly-report.js` | Monthly report as PDF, Markdown or text |
+| `analytics-engine.js` | Analytics calculations, Chart.js chart setups, savings funds |
 | `icon*.png`, `icon.svg` | App icons |
 
 ## Deploy to GitHub Pages
@@ -146,4 +147,35 @@ The **Quick Log** button floats on the Dashboard and Activity screens. Use it fo
 - They flow into budgets, the Advisor, the Dashboard totals and every report format.
 - The first cash entry creates a **Cash Wallet** account, with an optional starting amount. Its balance counts as liquid cash.
 - In Activity, the **Cash & transfer log only** filter shows just these entries.
+
+## Analytics dashboard (`analytics-engine.js`, Chart.js 4.5.1)
+On the **Dashboard**, switch **Overview / Analytics** and pick 3, 6 or 12 months.
+
+| Chart | Shows |
+|---|---|
+| Income vs. expenses | Income bars next to expenses, stacked by credit cards, bank outflows and cash |
+| Credit cards | **Spending:** monthly charges per card. **Utilization:** owed vs. credit limit, with a 30% guideline. **Debt:** amount owed at each month end, rebuilt from today's balance and statement history |
+| Spending by category | A doughnut of the top 5 categories plus "Other", with a value list |
+| Savings rate | A gauge for the latest month, plus a monthly trend |
+| Debt-to-income | A meter with the 20% / 36% / 43% zones |
+| Bank & cash balance | The combined balance of bank accounts and the cash wallet over time |
+
+**Design and accessibility:**
+- **Palette:** colors follow a validated colorblind-safe palette in a fixed order.
+- **No dual-axis charts:** different measures are always drawn as separate charts.
+- **Status labels:** good / warning / critical always comes with an icon and text, never color alone.
+- **Exact values:** every chart has **Show numbers** for the underlying figures.
+- **Offline:** Chart.js loads from jsDelivr only when charts are shown, and the service worker caches it for offline use.
+
+Credit limits come from card statements ("Credit Limit"), or you can enter them in Budget → Debt.
+
+## Savings & Emergency Fund
+- **Where:** Dashboard → Overview → **Savings & emergency fund**.
+- **Emergency fund target:** a number of months of essential spending (default 3; the Advisor works out the monthly figure) or a fixed amount.
+- **Goals:** any number of goals (e.g. Vacation Fund) with an amount, an optional date ("save $X/month to reach it on time"), and a color and icon.
+- **Add Funds / Withdraw Funds:** can move money from or to a bank account or the cash wallet. That's recorded as a transfer on both sides, so net worth doesn't change. "Not tracked here" is for a fund kept in a separate savings account.
+- **Animations:** a liquid-fill gauge, count-up numbers, bars that fill, and a floating "+$X" with a glow on deposits. All animation is turned off when the phone's Reduce Motion setting is on.
+- **Storage:** funds are accounts with `kind: 'fund'`, and deposits and withdrawals are `transfer` transactions with `accountType: 'fund'`. They count in net worth and in the Advisor's emergency-fund score.
+- **Reports:** funds appear in the balances, a Savings & Emergency Fund section, and the Markdown and text reports.
+- **PDF chart summary:** the PDF also gets a **Chart Summary** page, with the charts drawn on the device as images.
 

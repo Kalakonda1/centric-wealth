@@ -1,8 +1,8 @@
 /* Centric Wealth service worker — offline-first caching. Bump VERSION on every deploy. */
-const VERSION = 'v1.7.0';
+const VERSION = 'v1.8.0';
 const CACHE = `centric-wealth-${VERSION}`;
 
-const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js', './recurring-scanner.js', './advisor-engine.js', './monthly-report.js'];
+const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js', './recurring-scanner.js', './advisor-engine.js', './monthly-report.js', './analytics-engine.js'];
 const CDN = [
   'https://cdn.tailwindcss.com/3.4.16',
   'https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js',
@@ -16,6 +16,8 @@ const CDN = [
   // PDF report (monthly-report.js)
   'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js',
   'https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.9/dist/jspdf.plugin.autotable.min.js',
+  // Analytics charts (analytics-engine.js)
+  'https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js',
 ];
 
 self.addEventListener('install', (event) => {

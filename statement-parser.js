@@ -605,7 +605,10 @@
     const bm = text.match(balRe);
     let endingBalance = null;
     if (bm) { const v = parseMoney(bm[1]); if (v) endingBalance = (v.explicitSign < 0 || v.cr) ? -v.value : v.value; }
-    return { rows: out, meta: { statementType: type, dateOrder: order, statementEnd: toISO(ref), endingBalance, endingBalanceDate: endingBalance != null ? toISO(ref) : null, datedLines: dateSamples.length, looksLikeStatement: /balance|statement|account|payment|deposit|withdrawal|purchase/i.test(text) } };
+    // Card statements usually print the credit limit; used for utilization.
+    let creditLimit = null;
+    if (type === 'credit') { const lm = text.match(new RegExp('\\bcredit\\s+(?:limit|line)\\b[^\\n\\d$]{0,30}(' + MONEY_SRC + ')', 'i')); if (lm) { const v = parseMoney(lm[1]); if (v && v.value > 0) creditLimit = v.value; } }
+    return { rows: out, meta: { statementType: type, dateOrder: order, statementEnd: toISO(ref), creditLimit, endingBalance, endingBalanceDate: endingBalance != null ? toISO(ref) : null, datedLines: dateSamples.length, looksLikeStatement: /balance|statement|account|payment|deposit|withdrawal|purchase/i.test(text) } };
   }
 
   /* ======================================================================
