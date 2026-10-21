@@ -1,0 +1,1344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Centric Wealth — Private Finance</title>
+  <meta name="description" content="Offline-first personal finance tracker. All data stays on this device." />
+  <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Centric Wealth" />
+  <meta name="referrer" content="no-referrer" />
+  <!-- Relative paths so it works at https://<user>.github.io/<repo>/ -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
+
+  <!-- ===== CDN dependencies (pinned versions; cached by sw.js for offline use) ===== -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+          },
+          colors: {
+            brand: { 50:'#ecfdf5',100:'#d1fae5',400:'#34d399',500:'#10b981',600:'#059669',700:'#047857' },
+          },
+        },
+      },
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.29.10/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.453.0/dist/umd/lucide.min.js"></script>
+
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { height: 100%; overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
+    body { font-feature-settings: "tnum" 1, "cv11" 1; }
+    .num { font-variant-numeric: tabular-nums; }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+    .pt-safe { padding-top: env(safe-area-inset-top); }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { scrollbar-width: none; }
+    input, select, textarea { font-size: 16px; } /* stops iOS zoom-on-focus */
+    @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .sheet { animation: sheetUp .22s cubic-bezier(.2,.8,.2,1); }
+    .fade { animation: fadeIn .18s ease-out; }
+    @media (prefers-reduced-motion: reduce) { .sheet, .fade { animation: none; } }
+    #boot { position: fixed; inset: 0; display: grid; place-items: center; font: 14px system-ui; color: #64748b; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased">
+  <div id="root"><div id="boot">Loading Centric Wealth…</div></div>
+  <noscript>Centric Wealth needs JavaScript enabled. Your data never leaves this device.</noscript>
+
+  <!-- =====================================================================
+       FinanceDB — native IndexedDB wrapper (plain JS, no dependencies).
+       Exposed as window.FinanceDB so it can be reused outside React.
+       ===================================================================== -->
+  <script>
+  (function () {
+    'use strict';
+    const DB_NAME = 'centric-wealth';
+    const DB_VERSION = 1;
+
+    // Schema: bump DB_VERSION and add to this map to migrate.
+    const SCHEMA = {
+      transactions: { keyPath: 'id', indexes: [['date', 'date'], ['type', 'type'], ['category', 'category'], ['hash', 'hash']] },
+      debts:        { keyPath: 'id', indexes: [] },
+      bills:        { keyPath: 'id', indexes: [['active', 'active']] },
+      budgets:      { keyPath: 'category', indexes: [] },
+      accounts:     { keyPath: 'id', indexes: [] },
+      settings:     { keyPath: 'key', indexes: [] },
+    };
+
+    let dbPromise = null;
+
+    function open() {
+      if (dbPromise) return dbPromise;
+      dbPromise = new Promise((resolve, reject) => {
+        if (!('indexedDB' in window)) return reject(new Error('IndexedDB is not supported in this browser.'));
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = (e) => {
+          const db = req.result;
+          const tx = req.transaction;
+          for (const [name, def] of Object.entries(SCHEMA)) {
+            const store = db.objectStoreNames.contains(name)
+              ? tx.objectStore(name)
+              : db.createObjectStore(name, { keyPath: def.keyPath });
+            for (const [idx, path, opts] of def.indexes) {
+              if (!store.indexNames.contains(idx)) store.createIndex(idx, path, opts || { unique: false });
+            }
+          }
+        };
+        req.onsuccess = () => {
+          const db = req.result;
+          db.onversionchange = () => { db.close(); dbPromise = null; }; // another tab upgraded
+          resolve(db);
+        };
+        req.onerror = () => reject(req.error);
+        req.onblocked = () => console.warn('[FinanceDB] upgrade blocked — close other tabs of this app.');
+      });
+      return dbPromise;
+    }
+
+    const promisify = (req) => new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
+
+    /** Run fn(storeOrStores) inside a transaction; resolves after commit with fn's return value. */
+    async function withTx(storeNames, mode, fn) {
+      const db = await open();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeNames, mode);
+        const stores = Array.isArray(storeNames)
+          ? Object.fromEntries(storeNames.map((n) => [n, tx.objectStore(n)]))
+          : tx.objectStore(storeNames);
+        let result;
+        Promise.resolve(fn(stores, tx)).then((r) => { result = r; }).catch((err) => { try { tx.abort(); } catch (_) {} reject(err); });
+        tx.oncomplete = () => resolve(result);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+      });
+    }
+
+    const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+    const stamp = (obj) => { const now = new Date().toISOString(); return { createdAt: now, ...obj, updatedAt: now }; };
+
+    const FinanceDB = {
+      STORES: Object.keys(SCHEMA),
+      uid,
+      open,
+      getAll: (store) => withTx(store, 'readonly', (s) => promisify(s.getAll())),
+      get: (store, key) => withTx(store, 'readonly', (s) => promisify(s.get(key))),
+      count: (store) => withTx(store, 'readonly', (s) => promisify(s.count())),
+      /** Insert or update. Auto-assigns id (for id-keyed stores) and timestamps. */
+      put: (store, obj) => withTx(store, 'readwrite', (s) => {
+        const rec = stamp(SCHEMA[store].keyPath === 'id' && !obj.id ? { ...obj, id: uid() } : obj);
+        s.put(rec);
+        return rec;
+      }),
+      bulkPut: (store, arr) => withTx(store, 'readwrite', (s) => {
+        const out = arr.map((o) => stamp(SCHEMA[store].keyPath === 'id' && !o.id ? { ...o, id: uid() } : o));
+        out.forEach((r) => s.put(r));
+        return out.length;
+      }),
+      delete: (store, key) => withTx(store, 'readwrite', (s) => { s.delete(key); }),
+      clear: (store) => withTx(store, 'readwrite', (s) => { s.clear(); }),
+      /** Range query on an index, e.g. FinanceDB.byIndex('transactions','date','2026-10-01','2026-10-31') */
+      byIndex: (store, index, lower, upper) => withTx(store, 'readonly', (s) => {
+        const range = lower != null && upper != null ? IDBKeyRange.bound(lower, upper) : lower != null ? IDBKeyRange.only(lower) : null;
+        return promisify(s.index(index).getAll(range));
+      }),
+
+      // ---- settings helpers (key/value) ----
+      getSetting: async (key, fallback) => { const r = await FinanceDB.get('settings', key); return r ? r.value : fallback; },
+      setSetting: (key, value) => withTx('settings', 'readwrite', (s) => { s.put({ key, value }); }),
+
+      // ---- backup / restore ----
+      async exportAll() {
+        const data = { app: 'centric-wealth', version: DB_VERSION, exportedAt: new Date().toISOString(), stores: {} };
+        for (const name of FinanceDB.STORES) data.stores[name] = await FinanceDB.getAll(name);
+        return data;
+      },
+      async importAll(data, { replace = false } = {}) {
+        if (!data || !data.stores) throw new Error('Not a Centric Wealth backup file.');
+        const names = FinanceDB.STORES.filter((n) => Array.isArray(data.stores[n]));
+        await withTx(names, 'readwrite', (stores) => {
+          for (const n of names) {
+            if (replace) stores[n].clear();
+            data.stores[n].forEach((rec) => stores[n].put(rec));
+          }
+        });
+        return names.reduce((sum, n) => sum + data.stores[n].length, 0);
+      },
+      async wipe() {
+        await withTx(FinanceDB.STORES, 'readwrite', (stores) => { Object.values(stores).forEach((s) => s.clear()); });
+      },
+    };
+
+    window.FinanceDB = FinanceDB;
+  })();
+  </script>
+
+  <!-- =====================================================================
+       React app (JSX compiled in-browser by Babel Standalone)
+       ===================================================================== -->
+  <script type="text/babel" data-presets="react">
+  const { useState, useEffect, useMemo, useCallback, useContext, createContext, useRef } = React;
+  const DB = window.FinanceDB;
+
+  /* ---------------------------------------------------------------- utils */
+  const pad = (n) => String(n).padStart(2, '0');
+  const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const todayISO = () => toISO(new Date());
+  const parseISO = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+  const monthKey = (iso) => iso.slice(0, 7);
+  const addMonths = (key, n) => { const [y, m] = key.split('-').map(Number); const d = new Date(y, m - 1 + n, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  const monthLabel = (key, opts = { month: 'long', year: 'numeric' }) => { const [y, m] = key.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString(undefined, opts); };
+  const daysInMonth = (y, m0) => new Date(y, m0 + 1, 0).getDate();
+  const daysBetween = (a, b) => Math.round((parseISO(b) - parseISO(a)) / 86400000);
+  const prettyDate = (iso) => {
+    const diff = daysBetween(todayISO(), iso);
+    if (diff === 0) return 'Today';
+    if (diff === -1) return 'Yesterday';
+    if (diff === 1) return 'Tomorrow';
+    return parseISO(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  };
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const cls = (...a) => a.filter(Boolean).join(' ');
+
+  const EXPENSE_CATEGORIES = ['Housing', 'Utilities', 'Groceries', 'Dining', 'Transport', 'Health', 'Insurance', 'Shopping', 'Entertainment', 'Subscriptions', 'Debt Payment', 'Education', 'Travel', 'Gifts', 'Other'];
+  const INCOME_CATEGORIES = ['Salary', 'Freelance', 'Interest', 'Refund', 'Gift', 'Other Income'];
+  const DEBT_TYPES = ['Credit Card', 'Student Loan', 'Auto Loan', 'Mortgage', 'Personal Loan', 'Medical', 'Other'];
+  const ACCOUNT_TYPES = ['Checking', 'Savings', 'Cash', 'Investment', 'Retirement', 'Property', 'Other'];
+
+  // Keyword → category rules used for CSV auto-categorisation (edit freely).
+  const CATEGORY_RULES = [
+    [/rent|mortgage|landlord|hoa/i, 'Housing'],
+    [/electric|water|gas bill|utility|internet|comcast|verizon|at&t|t-mobile|phone/i, 'Utilities'],
+    [/grocery|market|aldi|kroger|publix|whole foods|trader joe|costco|walmart/i, 'Groceries'],
+    [/restaurant|cafe|coffee|starbucks|pizza|burger|doordash|uber eats|grubhub|bar & grill/i, 'Dining'],
+    [/uber|lyft|shell|exxon|chevron|fuel|parking|toll|transit|metro|airline/i, 'Transport'],
+    [/pharmacy|cvs|walgreens|doctor|dental|clinic|hospital/i, 'Health'],
+    [/insurance|geico|progressive|state farm/i, 'Insurance'],
+    [/netflix|spotify|hulu|disney|prime video|youtube|icloud|patreon|subscription/i, 'Subscriptions'],
+    [/amazon|target|best buy|ebay|etsy/i, 'Shopping'],
+    [/payroll|salary|direct dep/i, 'Salary'],
+    [/interest paid|dividend/i, 'Interest'],
+    [/refund|return/i, 'Refund'],
+  ];
+  const guessCategory = (desc, type) => {
+    for (const [re, cat] of CATEGORY_RULES) if (re.test(desc)) {
+      const isIncomeCat = INCOME_CATEGORIES.includes(cat);
+      if ((type === 'income') === isIncomeCat) return cat;
+    }
+    return type === 'income' ? 'Other Income' : 'Other';
+  };
+
+  // Simple non-cryptographic hash for duplicate detection on import.
+  const hashTx = (t) => { const s = `${t.date}|${round2(t.amount)}|${(t.description || '').toLowerCase().trim()}`; let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return String(h); };
+
+  /* ------------------------------------------------------------ bills math */
+  // Works out which occurrence of a bill is "current" and whether it's paid.
+  // A payment made after occurrence N-1 counts toward occurrence N. A bill created
+  // after an occurrence isn't treated as owing it. Missed cycles show as overdue.
+  // Returns { currentDue, nextDue, paid, daysLeft } (daysLeft < 0 → overdue).
+  function billStatus(bill, today = todayISO()) {
+    const t = parseISO(today);
+    const yearly = bill.frequency === 'yearly';
+    const occ = (y, m0) => new Date(y, m0, Math.min(bill.dueDay || 1, daysInMonth(y, m0)));
+    const step = (d, n) => (yearly ? occ(d.getFullYear() + n, d.getMonth()) : occ(d.getFullYear(), d.getMonth() + n));
+    let next = yearly ? occ(t.getFullYear(), (bill.dueMonth || 1) - 1) : occ(t.getFullYear(), t.getMonth());
+    if (next < t) next = step(next, 1);
+    const prev = step(next, -1), prev2 = step(next, -2);
+    const ref = bill.lastPaid ? parseISO(bill.lastPaid) : bill.createdAt ? parseISO(bill.createdAt.slice(0, 10)) : t;
+    const out = (cur, paid) => ({ currentDue: toISO(cur), nextDue: toISO(paid ? step(cur, 1) : cur), paid, daysLeft: daysBetween(today, toISO(cur)) });
+    if (ref > prev) return bill.lastPaid ? out(next, true) : out(next, false); // paid for upcoming, or brand-new bill
+    if (ref > prev2) return out(next, false);                               // last cycle settled, next one pending
+    return out(prev, false);                                                // missed the last cycle → overdue
+  }
+  const monthlyCost = (bill) => (bill.frequency === 'yearly' ? bill.amount / 12 : bill.amount);
+
+  /* ------------------------------------------------------------ debt payoff */
+  // Simulates payoff month by month. strategy: 'avalanche' (highest APR first) | 'snowball' (smallest balance first)
+  function simulatePayoff(debts, extra = 0, strategy = 'avalanche') {
+    let list = debts.filter((d) => d.balance > 0).map((d) => ({ ...d, bal: Number(d.balance), apr: Number(d.apr) || 0, min: Math.max(Number(d.minPayment) || 0, 1) }));
+    if (!list.length) return { months: 0, interest: 0, order: [], feasible: true };
+    const budget = list.reduce((s, d) => s + d.min, 0) + Math.max(0, Number(extra) || 0);
+    let months = 0, interest = 0; const order = [];
+    while (list.some((d) => d.bal > 0.005) && months < 600) {
+      months++;
+      list.forEach((d) => { if (d.bal > 0) { const i = d.bal * d.apr / 100 / 12; d.bal += i; interest += i; } });
+      const active = list.filter((d) => d.bal > 0.005);
+      active.sort(strategy === 'snowball' ? (a, b) => a.bal - b.bal : (a, b) => b.apr - a.apr || a.bal - b.bal);
+      let pool = budget;
+      active.forEach((d) => { const p = Math.min(d.min, d.bal, pool); d.bal -= p; pool -= p; });
+      for (const d of active) { if (pool <= 0) break; const p = Math.min(d.bal, pool); d.bal -= p; pool -= p; }
+      active.forEach((d) => { if (d.bal <= 0.005 && !order.find((o) => o.id === d.id)) { d.bal = 0; order.push({ id: d.id, name: d.name, month: months }); } });
+    }
+    return { months, interest: round2(interest), order, feasible: months < 600 };
+  }
+
+  /* -------------------------------------------------------------- CSV parse */
+  function parseCSV(text) {
+    const rows = []; let row = [], field = '', q = false;
+    text = text.replace(/^﻿/, '');
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+        else field += c;
+      } else if (c === '"') q = true;
+      else if (c === ',' || c === ';' || c === '\t') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(field); rows.push(row); row = []; field = ''; }
+      else field += c;
+    }
+    if (field || row.length) { row.push(field); rows.push(row); }
+    return rows.filter((r) => r.some((v) => v.trim() !== ''));
+  }
+  const parseAmount = (v) => {
+    if (v == null) return NaN;
+    let s = String(v).trim(); if (!s) return NaN;
+    const neg = /^\(.*\)$/.test(s) || /-/.test(s) || /\bDR\b/i.test(s);
+    s = s.replace(/[^0-9.,]/g, '');
+    if (/,\d{2}$/.test(s) && !/\.\d{2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.'); else s = s.replace(/,/g, '');
+    const n = parseFloat(s); return isNaN(n) ? NaN : neg ? -n : n;
+  };
+  function parseDateFlexible(v, fmt = 'auto') {
+    const s = String(v || '').trim(); let m;
+    if ((m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/))) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+    if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/))) {
+      let [, a, b, y] = m; if (y.length === 2) y = '20' + y;
+      let mo = a, d = b;
+      if (fmt === 'DMY' || (fmt === 'auto' && Number(a) > 12)) { mo = b; d = a; }
+      if (Number(mo) > 12) return null;
+      return `${y}-${pad(mo)}-${pad(d)}`;
+    }
+    const d = new Date(s); return isNaN(d) ? null : toISO(d);
+  }
+
+  /* ------------------------------------------------------------ app context */
+  const AppCtx = createContext(null);
+  const useApp = () => useContext(AppCtx);
+
+  function useFinanceData() {
+    const [data, setData] = useState({ transactions: [], debts: [], bills: [], budgets: [], accounts: [], settings: {} });
+    const [ready, setReady] = useState(false);
+    const [error, setError] = useState(null);
+
+    const load = useCallback(async (only) => {
+      const names = only ? [].concat(only) : DB.STORES;
+      const entries = await Promise.all(names.map(async (n) => [n, await DB.getAll(n)]));
+      setData((prev) => {
+        const next = { ...prev };
+        for (const [n, rows] of entries) next[n] = n === 'settings' ? Object.fromEntries(rows.map((r) => [r.key, r.value])) : rows;
+        return next;
+      });
+    }, []);
+
+    useEffect(() => { load().then(() => setReady(true)).catch((e) => { setError(e.message); setReady(true); }); }, [load]);
+
+    const actions = useMemo(() => ({
+      reload: load,
+      save: async (store, obj) => { const r = await DB.put(store, obj); await load(store); return r; },
+      remove: async (store, key) => { await DB.delete(store, key); await load(store); },
+      bulk: async (store, arr) => { const n = await DB.bulkPut(store, arr); await load(store); return n; },
+      setSetting: async (k, v) => { await DB.setSetting(k, v); await load('settings'); },
+    }), [load]);
+
+    return { data, ready, error, ...actions };
+  }
+
+  /* --------------------------------------------------------------- icons */
+  // Renders Lucide icon nodes (from the UMD build) as React SVG elements.
+  const camel = (k) => k.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  function Icon({ name, size = 20, strokeWidth = 2, className = '' }) {
+    const node = (window.lucide && (lucide.icons?.[name] || lucide[name]));
+    if (!node) return <span style={{ width: size, height: size, display: 'inline-block' }} />;
+    const children = node[0] === 'svg' ? node[2] : node;
+    return (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+        {children.map(([tag, attrs], i) => React.createElement(tag, { key: i, ...Object.fromEntries(Object.entries(attrs).map(([k, v]) => [camel(k), v])) }))}
+      </svg>
+    );
+  }
+
+  /* ------------------------------------------------------- UI primitives */
+  const Card = ({ className = '', children, ...p }) => (
+    <div className={cls('rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 shadow-sm', className)} {...p}>{children}</div>
+  );
+  const SectionTitle = ({ children, action }) => (
+    <div className="flex items-center justify-between px-1 mb-2 mt-6">
+      <h2 className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{children}</h2>
+      {action}
+    </div>
+  );
+  const Button = ({ variant = 'primary', className = '', children, ...p }) => {
+    const styles = {
+      primary: 'bg-brand-600 text-white active:bg-brand-700 disabled:opacity-50',
+      secondary: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100 active:bg-slate-200 dark:active:bg-slate-700',
+      danger: 'bg-rose-600 text-white active:bg-rose-700',
+      ghost: 'text-brand-700 dark:text-brand-400 active:bg-slate-100 dark:active:bg-slate-800',
+    };
+    return <button className={cls('inline-flex items-center justify-center gap-2 rounded-xl px-4 h-11 text-[15px] font-semibold transition-colors', styles[variant], className)} {...p}>{children}</button>;
+  };
+  const Field = ({ label, hint, children }) => (
+    <label className="block">
+      <span className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">{label}</span>
+      {children}
+      {hint && <span className="block text-xs text-slate-500 mt-1">{hint}</span>}
+    </label>
+  );
+  const inputCls = 'w-full h-11 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500';
+  const Input = (p) => <input className={inputCls} {...p} />;
+  const Select = ({ options, ...p }) => (
+    <select className={inputCls} {...p}>{options.map((o) => typeof o === 'string' ? <option key={o} value={o}>{o}</option> : <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+  );
+  const Segmented = ({ value, onChange, options }) => (
+    <div className="grid rounded-xl bg-slate-200/70 dark:bg-slate-800 p-1" style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}>
+      {options.map((o) => (
+        <button key={o.value} type="button" onClick={() => onChange(o.value)}
+          className={cls('h-9 rounded-lg text-sm font-semibold transition-colors', value === o.value ? 'bg-white dark:bg-slate-950 shadow-sm text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400')}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+  const Progress = ({ value }) => {
+    const pct = Math.min(100, Math.max(0, value * 100));
+    const color = value > 1 ? 'bg-rose-500' : value > 0.85 ? 'bg-amber-500' : 'bg-brand-500';
+    return <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"><div className={cls('h-full rounded-full', color)} style={{ width: `${pct}%` }} /></div>;
+  };
+  const Empty = ({ icon, title, body, action }) => (
+    <div className="text-center py-10 px-6">
+      <div className="mx-auto mb-3 w-12 h-12 rounded-2xl grid place-items-center bg-slate-100 dark:bg-slate-800 text-slate-500"><Icon name={icon} size={22} /></div>
+      <p className="font-semibold">{title}</p>
+      {body && <p className="text-sm text-slate-500 mt-1">{body}</p>}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  );
+
+  function Sheet({ open, title, onClose, children }) {
+    useEffect(() => {
+      if (!open) return;
+      const onKey = (e) => e.key === 'Escape' && onClose();
+      document.addEventListener('keydown', onKey);
+      document.body.style.overflow = 'hidden';
+      return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+    }, [open, onClose]);
+    if (!open) return null;
+    return (
+      <div className="fixed inset-0 z-50 flex items-end justify-center" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="absolute inset-0 bg-slate-950/50 fade" onClick={onClose} />
+        <div className="sheet relative w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-t-3xl bg-white dark:bg-slate-900 pb-safe">
+          <div className="sticky top-0 z-10 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-5 pt-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+            <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-300 dark:bg-slate-700" />
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold">{title}</h3>
+              <button onClick={onClose} className="w-9 h-9 grid place-items-center rounded-full bg-slate-100 dark:bg-slate-800" aria-label="Close"><Icon name="X" size={18} /></button>
+            </div>
+          </div>
+          <div className="px-5 py-4">{children}</div>
+        </div>
+      </div>
+    );
+  }
+
+  function Toast({ toast }) {
+    if (!toast) return null;
+    return (
+      <div className="fixed left-1/2 -translate-x-1/2 bottom-24 z-[60] fade pb-safe">
+        <div className={cls('px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium text-white', toast.kind === 'error' ? 'bg-rose-600' : 'bg-slate-900 dark:bg-slate-700')}>{toast.msg}</div>
+      </div>
+    );
+  }
+
+  /* --------------------------------------------------------- derived data */
+  function useSummary() {
+    const { data } = useApp();
+    return useMemo(() => {
+      const mk = monthKey(todayISO());
+      const monthTx = data.transactions.filter((t) => monthKey(t.date) === mk);
+      const income = monthTx.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+      const expense = monthTx.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+      const assets = data.accounts.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+      const liabilities = data.debts.reduce((s, d) => s + (Number(d.balance) || 0), 0);
+      const subs = data.bills.filter((b) => b.active !== false && b.isSubscription);
+      const subsMonthly = subs.reduce((s, b) => s + monthlyCost(b), 0);
+      const byCat = {};
+      monthTx.filter((t) => t.type === 'expense').forEach((t) => { byCat[t.category] = (byCat[t.category] || 0) + t.amount; });
+      const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+      const upcoming = data.bills.filter((b) => b.active !== false).map((b) => ({ ...b, st: billStatus(b) }))
+        .filter((b) => !b.st.paid && b.st.daysLeft <= 14).sort((a, b) => a.st.daysLeft - b.st.daysLeft);
+      return { mk, income, expense, net: income - expense, assets, liabilities, netWorth: assets - liabilities, subs, subsMonthly, topCats, upcoming, monthTx };
+    }, [data]);
+  }
+
+  /* ============================================================ DASHBOARD */
+  function SummaryCard({ icon, label, value, sub, tone = 'slate', onClick }) {
+    const tones = {
+      slate: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
+      green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400',
+      red: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400',
+      violet: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400',
+    };
+    return (
+      <Card className="p-4 text-left active:scale-[.98] transition-transform cursor-pointer" onClick={onClick} role="button" tabIndex={0}>
+        <div className={cls('w-9 h-9 rounded-xl grid place-items-center mb-3', tones[tone])}><Icon name={icon} size={18} /></div>
+        <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+        <p className="num text-[22px] leading-7 font-bold tracking-tight mt-0.5 truncate">{value}</p>
+        {sub && <p className="text-xs leading-snug text-slate-500 mt-1 whitespace-pre-line">{sub}</p>}
+      </Card>
+    );
+  }
+
+  function Dashboard({ go }) {
+    const { data, fmt, loadSample } = useApp();
+    const s = useSummary();
+    const savingsRate = s.income > 0 ? Math.round((s.net / s.income) * 100) : null;
+    const recent = [...data.transactions].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 5);
+    const maxCat = s.topCats[0]?.[1] || 1;
+    const isEmpty = !data.transactions.length && !data.accounts.length && !data.debts.length && !data.bills.length;
+
+    return (
+      <div>
+        <header className="flex items-center justify-between pt-2">
+          <div>
+            <p className="text-sm text-slate-500">{monthLabel(s.mk)}</p>
+            <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
+          </div>
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
+            <Icon name="ShieldCheck" size={14} /> On-device
+          </span>
+        </header>
+
+        {isEmpty && (
+          <Card className="mt-4 p-4 border-dashed">
+            <p className="font-semibold">Welcome to Centric Wealth</p>
+            <p className="text-sm text-slate-500 mt-1">Everything you enter is stored in this browser only. Import a bank CSV, add entries by hand, or explore with sample data.</p>
+            <div className="flex gap-2 mt-3">
+              <Button className="flex-1" onClick={() => go('upload')}><Icon name="Upload" size={16} />Import</Button>
+              <Button variant="secondary" className="flex-1" onClick={loadSample}>Try sample</Button>
+            </div>
+          </Card>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <SummaryCard icon="Landmark" label="Net Worth" value={fmt(s.netWorth)} sub={`${fmt(s.assets, true)} assets\n${fmt(s.liabilities, true)} debt`} onClick={() => go('budget', 'assets')} />
+          <SummaryCard icon="TrendingUp" tone="green" label="Monthly Income" value={fmt(s.income)} sub={`${s.monthTx.filter((t) => t.type === 'income').length} deposits`} onClick={() => go('transactions')} />
+          <SummaryCard icon="TrendingDown" tone="red" label="Monthly Expense" value={fmt(s.expense)} sub={savingsRate != null ? `Saving ${savingsRate}% of income` : 'No income logged yet'} onClick={() => go('transactions')} />
+          <SummaryCard icon="Repeat" tone="violet" label="Active Subscriptions" value={String(s.subs.length)} sub={`${fmt(s.subsMonthly)}/mo\n${fmt(s.subsMonthly * 12, true)}/yr`} onClick={() => go('budget', 'bills')} />
+        </div>
+
+        <Card className="mt-3 p-4">
+          <div className="flex items-baseline justify-between">
+            <p className="text-sm font-medium text-slate-500">Cash flow this month</p>
+            <p className={cls('num font-bold', s.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>{s.net >= 0 ? '+' : ''}{fmt(s.net)}</p>
+          </div>
+          <div className="mt-3 h-3 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
+            {(s.income + s.expense) > 0 && <>
+              <div className="bg-emerald-500" style={{ width: `${(s.income / (s.income + s.expense)) * 100}%` }} />
+              <div className="bg-rose-400" style={{ width: `${(s.expense / (s.income + s.expense)) * 100}%` }} />
+            </>}
+          </div>
+          <div className="flex justify-between text-xs text-slate-500 mt-2">
+            <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />In {fmt(s.income, true)}</span>
+            <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-rose-400 inline-block" />Out {fmt(s.expense, true)}</span>
+          </div>
+        </Card>
+
+        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'bills')}>All bills</button>}>Due soon</SectionTitle>
+        <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+          {s.upcoming.length === 0 ? <p className="p-4 text-sm text-slate-500">Nothing due in the next 14 days.</p> :
+            s.upcoming.slice(0, 4).map((b) => (
+              <div key={b.id} className="flex items-center gap-3 p-3.5">
+                <div className={cls('w-10 h-10 rounded-xl grid place-items-center', b.st.daysLeft <= 2 ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500')}>
+                  <Icon name={b.isSubscription ? 'Repeat' : 'Receipt'} size={18} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{b.name}</p>
+                  <p className="text-xs text-slate-500">{b.st.daysLeft < 0 ? `${-b.st.daysLeft}d overdue` : prettyDate(b.st.currentDue)}</p>
+                </div>
+                <p className="num font-semibold">{fmt(b.amount)}</p>
+              </div>
+            ))}
+        </Card>
+
+        <SectionTitle>Top spending</SectionTitle>
+        <Card className="p-4 space-y-3">
+          {s.topCats.length === 0 ? <p className="text-sm text-slate-500">No expenses this month yet.</p> :
+            s.topCats.slice(0, 5).map(([cat, amt]) => (
+              <div key={cat}>
+                <div className="flex justify-between text-sm mb-1"><span>{cat}</span><span className="num font-medium">{fmt(amt)}</span></div>
+                <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-2 rounded-full bg-slate-700 dark:bg-slate-300" style={{ width: `${(amt / maxCat) * 100}%` }} /></div>
+              </div>
+            ))}
+        </Card>
+
+        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('transactions')}>See all</button>}>Recent</SectionTitle>
+        <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+          {recent.length === 0 ? <p className="p-4 text-sm text-slate-500">No transactions yet.</p> : recent.map((t) => <TxRow key={t.id} t={t} />)}
+        </Card>
+      </div>
+    );
+  }
+
+  /* ========================================================= TRANSACTIONS */
+  function TxRow({ t, onClick }) {
+    const { fmt } = useApp();
+    const income = t.type === 'income';
+    return (
+      <button onClick={onClick} className="w-full flex items-center gap-3 p-3.5 text-left active:bg-slate-50 dark:active:bg-slate-800/50">
+        <div className={cls('w-10 h-10 rounded-xl grid place-items-center shrink-0', income ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300')}>
+          <Icon name={income ? 'ArrowDownLeft' : 'ArrowUpRight'} size={18} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-medium truncate">{t.description || t.category}</p>
+          <p className="text-xs text-slate-500 truncate">{t.category} · {prettyDate(t.date)}</p>
+        </div>
+        <p className={cls('num font-semibold', income && 'text-emerald-600 dark:text-emerald-400')}>{income ? '+' : '−'}{fmt(t.amount)}</p>
+      </button>
+    );
+  }
+
+  function TxForm({ initial, onDone }) {
+    const { save, remove, toast } = useApp();
+    const [f, setF] = useState(() => initial || { type: 'expense', amount: '', category: 'Groceries', date: todayISO(), description: '' });
+    const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target ? e.target.value : e }));
+    const cats = f.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+    useEffect(() => { if (!cats.includes(f.category)) setF((p) => ({ ...p, category: cats[0] })); }, [f.type]);
+    const submit = async (e) => {
+      e.preventDefault();
+      const amount = round2(Math.abs(parseAmount(f.amount)));
+      if (!amount) return toast('Enter an amount', 'error');
+      const rec = { ...f, amount, source: f.source || 'manual' };
+      rec.hash = hashTx(rec);
+      await save('transactions', rec);
+      toast(initial ? 'Transaction updated' : 'Transaction added');
+      onDone();
+    };
+    return (
+      <form onSubmit={submit} className="space-y-4">
+        <Segmented value={f.type} onChange={set('type')} options={[{ value: 'expense', label: 'Expense' }, { value: 'income', label: 'Income' }]} />
+        <Field label="Amount"><Input inputMode="decimal" placeholder="0.00" value={f.amount} onChange={set('amount')} autoFocus={!initial} /></Field>
+        <Field label="Description"><Input placeholder="e.g. Farmers market" value={f.description} onChange={set('description')} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Category"><Select options={cats} value={f.category} onChange={set('category')} /></Field>
+          <Field label="Date"><Input type="date" value={f.date} onChange={set('date')} /></Field>
+        </div>
+        <Button type="submit" className="w-full">{initial ? 'Save changes' : 'Add transaction'}</Button>
+        {initial && <Button type="button" variant="ghost" className="w-full !text-rose-600" onClick={async () => { if (confirm('Delete this transaction?')) { await remove('transactions', initial.id); toast('Deleted'); onDone(); } }}><Icon name="Trash2" size={16} />Delete</Button>}
+      </form>
+    );
+  }
+
+  function Transactions() {
+    const { data, fmt } = useApp();
+    const [month, setMonth] = useState(monthKey(todayISO()));
+    const [q, setQ] = useState('');
+    const [type, setType] = useState('all');
+    const [editing, setEditing] = useState(null); // null | 'new' | tx
+
+    const list = useMemo(() => data.transactions
+      .filter((t) => monthKey(t.date) === month)
+      .filter((t) => type === 'all' || t.type === type)
+      .filter((t) => !q || `${t.description} ${t.category}`.toLowerCase().includes(q.toLowerCase()))
+      .sort((a, b) => b.date.localeCompare(a.date)), [data.transactions, month, q, type]);
+    const groups = useMemo(() => list.reduce((g, t) => ((g[t.date] ||= []).push(t), g), {}), [list]);
+    const totIn = list.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const totOut = list.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+
+    return (
+      <div>
+        <header className="flex items-center justify-between pt-2">
+          <h1 className="text-2xl font-bold tracking-tight">Transactions</h1>
+          <Button className="!h-10 !px-3" onClick={() => setEditing('new')} aria-label="Add transaction"><Icon name="Plus" size={18} />Add</Button>
+        </header>
+
+        <div className="flex items-center justify-between mt-4">
+          <button className="w-10 h-10 grid place-items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" /></button>
+          <div className="text-center">
+            <p className="font-semibold">{monthLabel(month)}</p>
+            <p className="num text-xs text-slate-500"><span className="text-emerald-600 dark:text-emerald-400">+{fmt(totIn, true)}</span> · −{fmt(totOut, true)}</p>
+          </div>
+          <button className="w-10 h-10 grid place-items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" /></button>
+        </div>
+
+        <div className="relative mt-3">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Icon name="Search" size={18} /></span>
+          <input className={cls(inputCls, 'pl-10')} placeholder="Search description or category" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <div className="mt-3"><Segmented value={type} onChange={setType} options={[{ value: 'all', label: 'All' }, { value: 'expense', label: 'Expenses' }, { value: 'income', label: 'Income' }]} /></div>
+
+        {list.length === 0 ? <Empty icon="Receipt" title="No transactions" body="Nothing matches this month and filter." action={<Button variant="secondary" onClick={() => setEditing('new')}>Add one</Button>} /> :
+          Object.entries(groups).map(([date, items]) => (
+            <div key={date}>
+              <SectionTitle>{prettyDate(date)}</SectionTitle>
+              <Card className="divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+                {items.map((t) => <TxRow key={t.id} t={t} onClick={() => setEditing(t)} />)}
+              </Card>
+            </div>
+          ))}
+
+        <Sheet open={!!editing} title={editing === 'new' ? 'New transaction' : 'Edit transaction'} onClose={() => setEditing(null)}>
+          {editing && <TxForm initial={editing === 'new' ? null : { ...editing, amount: String(editing.amount) }} onDone={() => setEditing(null)} />}
+        </Sheet>
+      </div>
+    );
+  }
+
+  /* =============================================================== UPLOAD */
+  function UploadView() {
+    const { data, bulk, toast, reload, fmt } = useApp();
+    const [csv, setCsv] = useState(null); // { name, headers, rows }
+    const [map, setMap] = useState({});
+    const [dateFmt, setDateFmt] = useState('auto');
+    const [invert, setInvert] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const fileRef = useRef();
+
+    const handleFile = async (file) => {
+      if (!file) return;
+      const text = await file.text();
+      if (file.name.toLowerCase().endsWith('.json')) {
+        try {
+          const json = JSON.parse(text);
+          const replace = confirm('Restore backup?\n\nOK = replace all current data\nCancel = merge into current data');
+          const n = await DB.importAll(json, { replace });
+          await reload();
+          toast(`Restored ${n} records`);
+        } catch (e) { toast(e.message, 'error'); }
+        return;
+      }
+      const rows = parseCSV(text);
+      if (rows.length < 2) return toast('CSV looks empty', 'error');
+      const headers = rows[0].map((h, i) => h.trim() || `Column ${i + 1}`);
+      const find = (re) => headers.findIndex((h) => re.test(h));
+      const debit = find(/debit|withdraw|money out|paid out/i);
+      const credit = find(/credit|deposit|money in|paid in/i);
+      setMap({
+        date: find(/date|posted/i),
+        description: find(/desc|payee|merchant|name|memo|details/i),
+        // If the file splits debits/credits into two columns, don't use a single signed amount column.
+        amount: debit >= 0 && credit >= 0 ? -1 : find(/^amount$|amount|value|sum/i),
+        debit, credit,
+        category: find(/categ/i),
+      });
+      setCsv({ name: file.name, headers, rows: rows.slice(1) });
+    };
+
+    const parsed = useMemo(() => {
+      if (!csv) return [];
+      const existing = new Set(data.transactions.map((t) => t.hash));
+      return csv.rows.map((r) => {
+        const date = parseDateFlexible(r[map.date], dateFmt);
+        let amt = map.amount >= 0 ? parseAmount(r[map.amount]) : NaN;
+        if (isNaN(amt)) { const d = parseAmount(r[map.debit]); const c = parseAmount(r[map.credit]); amt = (isNaN(c) ? 0 : Math.abs(c)) - (isNaN(d) ? 0 : Math.abs(d)); }
+        if (invert) amt = -amt;
+        if (!date || isNaN(amt) || amt === 0) return null;
+        const type = amt > 0 ? 'income' : 'expense';
+        const description = (r[map.description] || '').trim();
+        const rawCat = map.category >= 0 ? (r[map.category] || '').trim() : '';
+        const cats = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+        const category = cats.find((c) => c.toLowerCase() === rawCat.toLowerCase()) || guessCategory(description, type);
+        const tx = { type, amount: round2(Math.abs(amt)), date, description, category, source: 'csv' };
+        tx.hash = hashTx(tx); tx.dup = existing.has(tx.hash);
+        return tx;
+      }).filter(Boolean);
+    }, [csv, map, dateFmt, invert, data.transactions]);
+    const fresh = parsed.filter((t) => !t.dup);
+
+    const doImport = async () => {
+      setBusy(true);
+      try { const n = await bulk('transactions', fresh.map(({ dup, ...t }) => t)); toast(`Imported ${n} transactions`); setCsv(null); }
+      catch (e) { toast(e.message, 'error'); }
+      setBusy(false);
+    };
+
+    const colOpts = csv ? [{ value: -1, label: '— none —' }, ...csv.headers.map((h, i) => ({ value: i, label: h }))] : [];
+    const setCol = (k) => (e) => setMap((m) => ({ ...m, [k]: Number(e.target.value) }));
+
+    return (
+      <div>
+        <header className="pt-2">
+          <h1 className="text-2xl font-bold tracking-tight">Upload</h1>
+          <p className="text-sm text-slate-500 mt-1">Bank CSV exports or a Centric Wealth backup (.json). Files are read in this browser and never uploaded anywhere.</p>
+        </header>
+
+        <input ref={fileRef} type="file" accept=".csv,.tsv,.txt,.json,text/csv,application/json" className="hidden" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ''; }} />
+        <button onClick={() => fileRef.current.click()}
+          onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
+          className="mt-4 w-full rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-8 text-center active:bg-slate-50 dark:active:bg-slate-800">
+          <div className="mx-auto w-12 h-12 rounded-2xl grid place-items-center bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400"><Icon name="FileSpreadsheet" size={24} /></div>
+          <p className="font-semibold mt-3">{csv ? csv.name : 'Choose a file'}</p>
+          <p className="text-xs text-slate-500 mt-1">CSV · TSV · JSON backup</p>
+        </button>
+
+        {csv && (
+          <>
+            <SectionTitle>Map columns</SectionTitle>
+            <Card className="p-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Date"><Select options={colOpts} value={map.date} onChange={setCol('date')} /></Field>
+                <Field label="Description"><Select options={colOpts} value={map.description} onChange={setCol('description')} /></Field>
+                <Field label="Amount (signed)"><Select options={colOpts} value={map.amount} onChange={setCol('amount')} /></Field>
+                <Field label="Category"><Select options={colOpts} value={map.category} onChange={setCol('category')} /></Field>
+                <Field label="Debit (if split)"><Select options={colOpts} value={map.debit} onChange={setCol('debit')} /></Field>
+                <Field label="Credit (if split)"><Select options={colOpts} value={map.credit} onChange={setCol('credit')} /></Field>
+              </div>
+              <Field label="Date format"><Select options={[{ value: 'auto', label: 'Auto-detect' }, { value: 'MDY', label: 'MM/DD/YYYY' }, { value: 'DMY', label: 'DD/MM/YYYY' }]} value={dateFmt} onChange={(e) => setDateFmt(e.target.value)} /></Field>
+              <label className="flex items-center justify-between gap-3 text-sm">
+                <span>Expenses are positive numbers in this file</span>
+                <input type="checkbox" className="w-5 h-5 accent-emerald-600" checked={invert} onChange={(e) => setInvert(e.target.checked)} />
+              </label>
+            </Card>
+
+            <SectionTitle>Preview · {parsed.length} rows{parsed.length !== fresh.length ? ` · ${parsed.length - fresh.length} duplicates skipped` : ''}</SectionTitle>
+            <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+              {parsed.slice(0, 6).map((t, i) => (
+                <div key={i} className={cls('flex items-center gap-3 p-3 text-sm', t.dup && 'opacity-40')}>
+                  <div className="flex-1 min-w-0"><p className="font-medium truncate">{t.description || '(no description)'}</p><p className="text-xs text-slate-500">{t.date} · {t.category}{t.dup ? ' · duplicate' : ''}</p></div>
+                  <p className={cls('num font-semibold', t.type === 'income' && 'text-emerald-600')}>{t.type === 'income' ? '+' : '−'}{fmt(t.amount)}</p>
+                </div>
+              ))}
+              {parsed.length === 0 && <p className="p-4 text-sm text-slate-500">No valid rows — check the date and amount columns.</p>}
+            </Card>
+            <div className="flex gap-2 mt-4">
+              <Button variant="secondary" className="flex-1" onClick={() => setCsv(null)}>Cancel</Button>
+              <Button className="flex-[2]" disabled={!fresh.length || busy} onClick={doImport}>Import {fresh.length}</Button>
+            </div>
+          </>
+        )}
+
+        {!csv && (
+          <>
+            <SectionTitle>Tips</SectionTitle>
+            <Card className="p-4 text-sm text-slate-600 dark:text-slate-300 space-y-2">
+              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Most banks offer “Download transactions → CSV” in online banking.</p>
+              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Re-importing the same file is safe — duplicates are detected and skipped.</p>
+              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Categories are guessed from descriptions; edit the rules in <code>CATEGORY_RULES</code>.</p>
+            </Card>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  /* ======================================================== BUDGET & DEBT */
+  function BudgetTab() {
+    const { data, save, remove, fmt, toast } = useApp();
+    const s = useSummary();
+    const [edit, setEdit] = useState(null);
+    const spent = Object.fromEntries(s.topCats);
+    const totalLimit = data.budgets.reduce((a, b) => a + b.limit, 0);
+    const totalSpent = data.budgets.reduce((a, b) => a + (spent[b.category] || 0), 0);
+    const unbudgeted = EXPENSE_CATEGORIES.filter((c) => !data.budgets.find((b) => b.category === c));
+
+    return (
+      <div>
+        <Card className="p-4 mt-4">
+          <div className="flex justify-between items-baseline"><p className="text-sm text-slate-500">Spent of budget · {monthLabel(s.mk, { month: 'long' })}</p><p className="num text-sm font-semibold">{totalLimit ? Math.round((totalSpent / totalLimit) * 100) : 0}%</p></div>
+          <p className="num text-2xl font-bold mt-1">{fmt(totalSpent)} <span className="text-base font-medium text-slate-500">/ {fmt(totalLimit)}</span></p>
+          <div className="mt-3"><Progress value={totalLimit ? totalSpent / totalLimit : 0} /></div>
+        </Card>
+        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ category: unbudgeted[0] || 'Other', limit: '' , isNew: true })}>+ Add</button>}>Categories</SectionTitle>
+        {data.budgets.length === 0 ? <Card><Empty icon="PiggyBank" title="No budgets yet" body="Set a monthly limit per category." /></Card> :
+          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+            {[...data.budgets].sort((a, b) => (spent[b.category] || 0) / b.limit - (spent[a.category] || 0) / a.limit).map((b) => {
+              const sp = spent[b.category] || 0; const left = b.limit - sp;
+              return (
+                <button key={b.category} className="w-full text-left p-4" onClick={() => setEdit({ ...b, limit: String(b.limit) })}>
+                  <div className="flex justify-between text-sm mb-2"><span className="font-medium">{b.category}</span><span className={cls('num', left < 0 ? 'text-rose-600 font-semibold' : 'text-slate-500')}>{left < 0 ? `${fmt(-left)} over` : `${fmt(left)} left`}</span></div>
+                  <Progress value={sp / b.limit} />
+                  <p className="num text-xs text-slate-500 mt-1.5">{fmt(sp)} of {fmt(b.limit)}</p>
+                </button>
+              );
+            })}
+          </Card>}
+        <Sheet open={!!edit} title={edit?.isNew ? 'New budget' : 'Edit budget'} onClose={() => setEdit(null)}>
+          {edit && (
+            <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); const limit = round2(parseAmount(edit.limit)); if (!limit) return toast('Enter a limit', 'error'); await save('budgets', { category: edit.category, limit }); setEdit(null); toast('Budget saved'); }}>
+              <Field label="Category">{edit.isNew ? <Select options={unbudgeted.length ? unbudgeted : EXPENSE_CATEGORIES} value={edit.category} onChange={(e) => setEdit({ ...edit, category: e.target.value })} /> : <Input value={edit.category} disabled />}</Field>
+              <Field label="Monthly limit"><Input inputMode="decimal" value={edit.limit} onChange={(e) => setEdit({ ...edit, limit: e.target.value })} autoFocus /></Field>
+              <Button type="submit" className="w-full">Save</Button>
+              {!edit.isNew && <Button type="button" variant="ghost" className="w-full !text-rose-600" onClick={async () => { await remove('budgets', edit.category); setEdit(null); }}>Remove budget</Button>}
+            </form>
+          )}
+        </Sheet>
+      </div>
+    );
+  }
+
+  function DebtTab() {
+    const { data, save, remove, fmt, toast } = useApp();
+    const [edit, setEdit] = useState(null);
+    const [pay, setPay] = useState(null);
+    const [extra, setExtra] = useState(() => String(data.settings.debtExtra ?? 100));
+    const [strategy, setStrategy] = useState(data.settings.debtStrategy || 'avalanche');
+    const total = data.debts.reduce((s, d) => s + Number(d.balance), 0);
+    const minTotal = data.debts.reduce((s, d) => s + Number(d.minPayment || 0), 0);
+    const plan = useMemo(() => simulatePayoff(data.debts, parseAmount(extra) || 0, strategy), [data.debts, extra, strategy]);
+    const base = useMemo(() => simulatePayoff(data.debts, 0, strategy), [data.debts, strategy]);
+    const freeDate = plan.months ? addMonths(monthKey(todayISO()), plan.months) : null;
+
+    const submitPay = async (e) => {
+      e.preventDefault();
+      const amount = round2(parseAmount(pay.amount)); if (!amount) return;
+      const d = data.debts.find((x) => x.id === pay.id);
+      await save('debts', { ...d, balance: round2(Math.max(0, d.balance - amount)) });
+      const tx = { type: 'expense', amount, category: 'Debt Payment', date: todayISO(), description: `Payment · ${d.name}`, source: 'debt', debtId: d.id };
+      tx.hash = hashTx(tx); await save('transactions', tx);
+      setPay(null); toast('Payment logged');
+    };
+
+    return (
+      <div>
+        <Card className="p-4 mt-4">
+          <p className="text-sm text-slate-500">Total debt</p>
+          <p className="num text-2xl font-bold">{fmt(total)}</p>
+          <p className="num text-xs text-slate-500 mt-1">{fmt(minTotal)}/mo in minimum payments</p>
+        </Card>
+
+        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', type: 'Credit Card', balance: '', apr: '', minPayment: '' })}>+ Add</button>}>Accounts</SectionTitle>
+        {data.debts.length === 0 ? <Card><Empty icon="CreditCard" title="No debts tracked" body="Add cards and loans to plan your payoff." /></Card> :
+          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+            {data.debts.map((d) => (
+              <div key={d.id} className="flex items-center gap-3 p-3.5">
+                <button className="flex-1 min-w-0 text-left flex items-center gap-3" onClick={() => setEdit({ ...d, balance: String(d.balance), apr: String(d.apr), minPayment: String(d.minPayment) })}>
+                  <div className="w-10 h-10 rounded-xl grid place-items-center bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400"><Icon name="CreditCard" size={18} /></div>
+                  <div className="min-w-0"><p className="font-medium truncate">{d.name}</p><p className="num text-xs text-slate-500">{d.apr}% APR · min {fmt(d.minPayment)}</p></div>
+                </button>
+                <div className="text-right"><p className="num font-semibold">{fmt(d.balance)}</p><button className="text-xs font-semibold text-brand-700 dark:text-brand-400" onClick={() => setPay({ id: d.id, name: d.name, amount: String(d.minPayment || '') })}>Log payment</button></div>
+              </div>
+            ))}
+          </Card>}
+
+        {data.debts.length > 0 && (
+          <>
+            <SectionTitle>Payoff planner</SectionTitle>
+            <Card className="p-4 space-y-4">
+              <Segmented value={strategy} onChange={(v) => { setStrategy(v); DB.setSetting('debtStrategy', v); }} options={[{ value: 'avalanche', label: 'Avalanche' }, { value: 'snowball', label: 'Snowball' }]} />
+              <p className="text-xs text-slate-500 -mt-2">{strategy === 'avalanche' ? 'Highest interest rate first — lowest total interest.' : 'Smallest balance first — quickest early wins.'}</p>
+              <Field label="Extra per month on top of minimums"><Input inputMode="decimal" value={extra} onChange={(e) => setExtra(e.target.value)} onBlur={() => DB.setSetting('debtExtra', parseAmount(extra) || 0)} /></Field>
+              {plan.feasible ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3"><p className="text-xs text-slate-500">Debt-free</p><p className="font-bold">{freeDate ? monthLabel(freeDate, { month: 'short', year: 'numeric' }) : '—'}</p><p className="text-xs text-slate-500">{plan.months} months</p></div>
+                  <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3"><p className="text-xs text-slate-500">Total interest</p><p className="num font-bold">{fmt(plan.interest)}</p>{base.feasible && base.interest > plan.interest && <p className="num text-xs text-emerald-600">saves {fmt(base.interest - plan.interest, true)}</p>}</div>
+                </div>
+              ) : <p className="text-sm text-rose-600 flex gap-2"><Icon name="TriangleAlert" size={16} className="shrink-0 mt-0.5" />Payments don’t cover interest — increase the monthly amount.</p>}
+              {plan.feasible && <ol className="text-sm space-y-1.5">{plan.order.map((o, i) => <li key={o.id} className="flex justify-between"><span><span className="text-slate-400 mr-2">{i + 1}.</span>{o.name}</span><span className="text-slate-500">{monthLabel(addMonths(monthKey(todayISO()), o.month), { month: 'short', year: '2-digit' })}</span></li>)}</ol>}
+            </Card>
+          </>
+        )}
+
+        <Sheet open={!!edit} title={edit?.id ? 'Edit debt' : 'New debt'} onClose={() => setEdit(null)}>
+          {edit && (
+            <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!edit.name) return toast('Name it', 'error'); await save('debts', { ...edit, balance: round2(parseAmount(edit.balance) || 0), apr: Number(edit.apr) || 0, minPayment: round2(parseAmount(edit.minPayment) || 0) }); setEdit(null); toast('Debt saved'); }}>
+              <Field label="Name"><Input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} placeholder="e.g. Visa card" /></Field>
+              <Field label="Type"><Select options={DEBT_TYPES} value={edit.type} onChange={(e) => setEdit({ ...edit, type: e.target.value })} /></Field>
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="Balance"><Input inputMode="decimal" value={edit.balance} onChange={(e) => setEdit({ ...edit, balance: e.target.value })} /></Field>
+                <Field label="APR %"><Input inputMode="decimal" value={edit.apr} onChange={(e) => setEdit({ ...edit, apr: e.target.value })} /></Field>
+                <Field label="Min/mo"><Input inputMode="decimal" value={edit.minPayment} onChange={(e) => setEdit({ ...edit, minPayment: e.target.value })} /></Field>
+              </div>
+              <Button type="submit" className="w-full">Save</Button>
+              {edit.id && <Button type="button" variant="ghost" className="w-full !text-rose-600" onClick={async () => { if (confirm('Delete this debt?')) { await remove('debts', edit.id); setEdit(null); } }}>Delete</Button>}
+            </form>
+          )}
+        </Sheet>
+        <Sheet open={!!pay} title={`Payment · ${pay?.name || ''}`} onClose={() => setPay(null)}>
+          {pay && (
+            <form className="space-y-4" onSubmit={submitPay}>
+              <Field label="Amount" hint="Reduces the balance and logs a Debt Payment expense."><Input inputMode="decimal" value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} autoFocus /></Field>
+              <Button type="submit" className="w-full">Log payment</Button>
+            </form>
+          )}
+        </Sheet>
+      </div>
+    );
+  }
+
+  function BillsTab() {
+    const { data, save, remove, fmt, toast } = useApp();
+    const [edit, setEdit] = useState(null);
+    const bills = data.bills.map((b) => ({ ...b, st: billStatus(b) })).sort((a, b) => (a.active === false) - (b.active === false) || a.st.daysLeft - b.st.daysLeft);
+    const monthlyTotal = data.bills.filter((b) => b.active !== false).reduce((s, b) => s + monthlyCost(b), 0);
+
+    const markPaid = async (b) => {
+      const { st, ...bill } = b;
+      await save('bills', { ...bill, lastPaid: todayISO() });
+      if (b.logExpense !== false) {
+        const tx = { type: 'expense', amount: b.amount, category: b.category || (b.isSubscription ? 'Subscriptions' : 'Utilities'), date: todayISO(), description: b.name, source: 'bill', billId: b.id };
+        tx.hash = hashTx(tx); await save('transactions', tx);
+      }
+      toast(`${b.name} marked paid`);
+    };
+
+    return (
+      <div>
+        <Card className="p-4 mt-4">
+          <p className="text-sm text-slate-500">Recurring bills</p>
+          <p className="num text-2xl font-bold">{fmt(monthlyTotal)}<span className="text-base font-medium text-slate-500">/mo</span></p>
+          <p className="text-xs text-slate-500 mt-1">Reminders run when the app is opened{data.settings.notify ? ' · notifications on' : ''}.</p>
+        </Card>
+        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', amount: '', dueDay: new Date().getDate(), dueMonth: new Date().getMonth() + 1, frequency: 'monthly', isSubscription: false, category: 'Utilities', active: true })}>+ Add</button>}>Bills & subscriptions</SectionTitle>
+        {bills.length === 0 ? <Card><Empty icon="Bell" title="No bills yet" body="Add rent, utilities and subscriptions to get due-date reminders." /></Card> :
+          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+            {bills.map((b) => {
+              const overdue = !b.st.paid && b.st.daysLeft < 0; const soon = !b.st.paid && b.st.daysLeft <= 3;
+              return (
+                <div key={b.id} className={cls('flex items-center gap-3 p-3.5', b.active === false && 'opacity-50')}>
+                  <button className="flex-1 min-w-0 text-left" onClick={() => { const { st, ...rest } = b; setEdit({ ...rest, amount: String(b.amount) }); }}>
+                    <p className="font-medium truncate flex items-center gap-1.5">{b.name}{b.isSubscription && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">Sub</span>}</p>
+                    <p className={cls('text-xs', overdue ? 'text-rose-600 font-semibold' : soon ? 'text-amber-600 font-medium' : 'text-slate-500')}>
+                      {b.st.paid ? `Paid · next ${prettyDate(b.st.nextDue)}` : overdue ? `${-b.st.daysLeft}d overdue` : `Due ${prettyDate(b.st.currentDue)}`} · {b.frequency}
+                    </p>
+                  </button>
+                  <p className="num font-semibold">{fmt(b.amount)}</p>
+                  <button onClick={() => !b.st.paid && markPaid(b)} disabled={b.st.paid || b.active === false} aria-label={b.st.paid ? 'Paid' : 'Mark paid'}
+                    className={cls('w-9 h-9 rounded-full grid place-items-center border', b.st.paid ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 dark:border-slate-600 text-slate-400')}>
+                    <Icon name="Check" size={16} strokeWidth={3} />
+                  </button>
+                </div>
+              );
+            })}
+          </Card>}
+        <Sheet open={!!edit} title={edit?.id ? 'Edit bill' : 'New bill'} onClose={() => setEdit(null)}>
+          {edit && (
+            <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); const amount = round2(parseAmount(edit.amount)); if (!edit.name || !amount) return toast('Name and amount required', 'error'); await save('bills', { ...edit, amount, dueDay: Number(edit.dueDay), dueMonth: Number(edit.dueMonth) }); setEdit(null); toast('Bill saved'); }}>
+              <Field label="Name"><Input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} placeholder="e.g. Rent, Streaming" /></Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Amount"><Input inputMode="decimal" value={edit.amount} onChange={(e) => setEdit({ ...edit, amount: e.target.value })} /></Field>
+                <Field label="Frequency"><Select options={[{ value: 'monthly', label: 'Monthly' }, { value: 'yearly', label: 'Yearly' }]} value={edit.frequency} onChange={(e) => setEdit({ ...edit, frequency: e.target.value })} /></Field>
+                {edit.frequency === 'yearly' && <Field label="Month"><Select options={Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: new Date(2000, i, 1).toLocaleDateString(undefined, { month: 'long' }) }))} value={edit.dueMonth} onChange={(e) => setEdit({ ...edit, dueMonth: e.target.value })} /></Field>}
+                <Field label="Due day"><Select options={Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: String(i + 1) }))} value={edit.dueDay} onChange={(e) => setEdit({ ...edit, dueDay: e.target.value })} /></Field>
+                <Field label="Category"><Select options={EXPENSE_CATEGORIES} value={edit.category} onChange={(e) => setEdit({ ...edit, category: e.target.value })} /></Field>
+              </div>
+              {[['isSubscription', 'This is a subscription'], ['active', 'Active'], ['logExpense', 'Log an expense when marked paid']].map(([k, label]) => (
+                <label key={k} className="flex items-center justify-between text-sm"><span>{label}</span>
+                  <input type="checkbox" className="w-5 h-5 accent-emerald-600" checked={k === 'isSubscription' ? !!edit[k] : edit[k] !== false} onChange={(e) => setEdit({ ...edit, [k]: e.target.checked })} /></label>
+              ))}
+              <Button type="submit" className="w-full">Save</Button>
+              {edit.id && <Button type="button" variant="ghost" className="w-full !text-rose-600" onClick={async () => { if (confirm('Delete this bill?')) { await remove('bills', edit.id); setEdit(null); } }}>Delete</Button>}
+            </form>
+          )}
+        </Sheet>
+      </div>
+    );
+  }
+
+  function AssetsTab() {
+    const { data, save, remove, fmt, toast } = useApp();
+    const s = useSummary();
+    const [edit, setEdit] = useState(null);
+    return (
+      <div>
+        <Card className="p-4 mt-4">
+          <p className="text-sm text-slate-500">Net worth</p>
+          <p className="num text-2xl font-bold">{fmt(s.netWorth)}</p>
+          <p className="num text-xs text-slate-500 mt-1">{fmt(s.assets)} assets − {fmt(s.liabilities)} debts</p>
+        </Card>
+        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', type: 'Checking', balance: '' })}>+ Add</button>}>Assets</SectionTitle>
+        {data.accounts.length === 0 ? <Card><Empty icon="Wallet" title="No assets yet" body="Add bank balances, savings and investments to track net worth." /></Card> :
+          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+            {data.accounts.map((a) => (
+              <button key={a.id} className="w-full flex items-center gap-3 p-3.5 text-left" onClick={() => setEdit({ ...a, balance: String(a.balance) })}>
+                <div className="w-10 h-10 rounded-xl grid place-items-center bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"><Icon name="Wallet" size={18} /></div>
+                <div className="flex-1 min-w-0"><p className="font-medium truncate">{a.name}</p><p className="text-xs text-slate-500">{a.type}</p></div>
+                <p className="num font-semibold">{fmt(a.balance)}</p>
+              </button>
+            ))}
+          </Card>}
+        <Sheet open={!!edit} title={edit?.id ? 'Edit asset' : 'New asset'} onClose={() => setEdit(null)}>
+          {edit && (
+            <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!edit.name) return toast('Name it', 'error'); await save('accounts', { ...edit, balance: round2(parseAmount(edit.balance) || 0) }); setEdit(null); toast('Saved'); }}>
+              <Field label="Name"><Input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} placeholder="e.g. Checking" /></Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Type"><Select options={ACCOUNT_TYPES} value={edit.type} onChange={(e) => setEdit({ ...edit, type: e.target.value })} /></Field>
+                <Field label="Balance"><Input inputMode="decimal" value={edit.balance} onChange={(e) => setEdit({ ...edit, balance: e.target.value })} /></Field>
+              </div>
+              <Button type="submit" className="w-full">Save</Button>
+              {edit.id && <Button type="button" variant="ghost" className="w-full !text-rose-600" onClick={async () => { if (confirm('Delete this asset?')) { await remove('accounts', edit.id); setEdit(null); } }}>Delete</Button>}
+            </form>
+          )}
+        </Sheet>
+      </div>
+    );
+  }
+
+  function BudgetDebt({ sub, setSub }) {
+    return (
+      <div>
+        <header className="pt-2"><h1 className="text-2xl font-bold tracking-tight">Budget & Debt</h1></header>
+        <div className="mt-4"><Segmented value={sub} onChange={setSub} options={[{ value: 'budget', label: 'Budget' }, { value: 'debt', label: 'Debt' }, { value: 'bills', label: 'Bills' }, { value: 'assets', label: 'Assets' }]} /></div>
+        {sub === 'budget' && <BudgetTab />}
+        {sub === 'debt' && <DebtTab />}
+        {sub === 'bills' && <BillsTab />}
+        {sub === 'assets' && <AssetsTab />}
+      </div>
+    );
+  }
+
+  /* ============================================================= SETTINGS */
+  const download = (name, content, type) => {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  function SettingsView() {
+    const { data, setSetting, reload, toast, loadSample, installPrompt, install } = useApp();
+    const st = data.settings;
+    const [storage, setStorage] = useState(null);
+    useEffect(() => {
+      (async () => {
+        if (!navigator.storage) return;
+        const est = navigator.storage.estimate ? await navigator.storage.estimate() : {};
+        const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+        setStorage({ used: est.usage || 0, persisted });
+      })();
+    }, [data]);
+
+    const Row = ({ icon, label, sub, children, onClick, danger }) => (
+      <div className={cls('flex items-center gap-3 p-3.5', onClick && 'cursor-pointer active:bg-slate-50 dark:active:bg-slate-800/50')} onClick={onClick}>
+        <div className={cls('w-9 h-9 rounded-xl grid place-items-center', danger ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300')}><Icon name={icon} size={18} /></div>
+        <div className="flex-1 min-w-0"><p className={cls('font-medium', danger && 'text-rose-600')}>{label}</p>{sub && <p className="text-xs text-slate-500">{sub}</p>}</div>
+        {children}
+      </div>
+    );
+    const smallSelect = 'h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-sm';
+
+    const exportJSON = async () => { download(`centric-wealth-backup-${todayISO()}.json`, JSON.stringify(await DB.exportAll(), null, 2), 'application/json'); setSetting('lastBackup', todayISO()); };
+    const exportCSV = () => {
+      const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const rows = [['Date', 'Type', 'Category', 'Description', 'Amount'], ...[...data.transactions].sort((a, b) => a.date.localeCompare(b.date)).map((t) => [t.date, t.type, t.category, t.description, (t.type === 'expense' ? -t.amount : t.amount).toFixed(2)])];
+      download(`centric-wealth-transactions-${todayISO()}.csv`, rows.map((r) => r.map(esc).join(',')).join('\n'), 'text/csv');
+    };
+    const toggleNotify = async () => {
+      if (st.notify) return setSetting('notify', false);
+      if (!('Notification' in window)) return toast('Notifications not supported here', 'error');
+      const p = await Notification.requestPermission();
+      if (p === 'granted') { await setSetting('notify', true); toast('Bill reminders on'); } else toast('Permission denied', 'error');
+    };
+    const persist = async () => { const ok = navigator.storage?.persist ? await navigator.storage.persist() : false; toast(ok ? 'Storage protected from eviction' : 'Browser declined — install the app and try again', ok ? 'ok' : 'error'); setStorage((s) => ({ ...s, persisted: ok })); };
+    const wipe = async () => { if (prompt('Type DELETE to erase all data on this device.') === 'DELETE') { await DB.wipe(); await reload(); toast('All data erased'); } };
+    const count = data.transactions.length + data.debts.length + data.bills.length + data.accounts.length + data.budgets.length;
+
+    return (
+      <div>
+        <header className="pt-2"><h1 className="text-2xl font-bold tracking-tight">Settings</h1></header>
+
+        <Card className="mt-4 p-4 flex gap-3 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20">
+          <Icon name="ShieldCheck" size={22} className="text-emerald-600 shrink-0" />
+          <p className="text-sm text-emerald-900 dark:text-emerald-200">No accounts, servers, analytics or API keys. Your {count} records live only in this browser’s IndexedDB. Back up regularly.</p>
+        </Card>
+
+        <SectionTitle>Preferences</SectionTitle>
+        <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+          <Row icon="Coins" label="Currency">
+            <select className={smallSelect} value={st.currency || 'USD'} onChange={(e) => setSetting('currency', e.target.value)}>
+              {['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'INR', 'JPY', 'CHF', 'MXN', 'BRL', 'ZAR', 'SGD'].map((c) => <option key={c}>{c}</option>)}
+            </select>
+          </Row>
+          <Row icon="SunMoon" label="Appearance">
+            <select className={smallSelect} value={st.theme || 'system'} onChange={(e) => setSetting('theme', e.target.value)}>
+              <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
+            </select>
+          </Row>
+          <Row icon="Bell" label="Bill reminders" sub="Shown when you open the app — no push server">
+            <button onClick={toggleNotify} role="switch" aria-checked={!!st.notify} className={cls('w-12 h-7 rounded-full p-0.5 transition-colors', st.notify ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-700')}>
+              <span className={cls('block w-6 h-6 rounded-full bg-white shadow transition-transform', st.notify && 'translate-x-5')} />
+            </button>
+          </Row>
+          <Row icon="CalendarClock" label="Remind me">
+            <select className={smallSelect} value={st.reminderDays ?? 3} onChange={(e) => setSetting('reminderDays', Number(e.target.value))}>
+              {[1, 2, 3, 5, 7].map((d) => <option key={d} value={d}>{d} day{d > 1 ? 's' : ''} before</option>)}
+            </select>
+          </Row>
+        </Card>
+
+        <SectionTitle>Your data</SectionTitle>
+        <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+          <Row icon="Download" label="Back up (JSON)" sub={st.lastBackup ? `Last backup ${prettyDate(st.lastBackup)}` : 'Never backed up'} onClick={exportJSON}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
+          <Row icon="FileSpreadsheet" label="Export transactions (CSV)" onClick={exportCSV}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
+          <Row icon="HardDrive" label="Persistent storage" sub={storage ? `${(storage.used / 1024).toFixed(0)} KB used · ${storage.persisted ? 'protected' : 'may be cleared by browser'}` : 'Checking…'} onClick={storage && !storage.persisted ? persist : undefined}>
+            {storage && !storage.persisted && <span className="text-xs font-semibold text-brand-700 dark:text-brand-400">Protect</span>}
+          </Row>
+          {installPrompt && <Row icon="Smartphone" label="Install app" sub="Add to home screen for offline use" onClick={install}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>}
+          <Row icon="Sparkles" label="Load sample data" sub="Adds demo records (merge)" onClick={loadSample}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
+          <Row icon="Trash2" label="Erase all data" danger onClick={wipe} />
+        </Card>
+        <p className="text-center text-xs text-slate-400 mt-6">Centric Wealth · offline-first · v1.0.0</p>
+      </div>
+    );
+  }
+
+  /* ========================================================== sample data */
+  function buildSample() {
+    const now = new Date(); const mk = (offset, day) => toISO(new Date(now.getFullYear(), now.getMonth() - offset, Math.min(day, now.getDate() + (offset ? 31 : 0))));
+    const tx = [];
+    for (let m = 2; m >= 0; m--) {
+      tx.push({ type: 'income', amount: 3200, category: 'Salary', date: mk(m, 1), description: 'Payroll deposit' });
+      tx.push({ type: 'income', amount: 3200, category: 'Salary', date: mk(m, 15), description: 'Payroll deposit' });
+      tx.push({ type: 'expense', amount: 1650, category: 'Housing', date: mk(m, 1), description: 'Rent' });
+      tx.push({ type: 'expense', amount: 128.4 + m * 7, category: 'Utilities', date: mk(m, 6), description: 'Electric company' });
+      [3, 9, 14, 20].forEach((d, i) => tx.push({ type: 'expense', amount: 62 + i * 18 + m * 4, category: 'Groceries', date: mk(m, d), description: 'Neighborhood market' }));
+      [5, 12, 18].forEach((d, i) => tx.push({ type: 'expense', amount: 24 + i * 11, category: 'Dining', date: mk(m, d), description: 'Corner cafe' }));
+      tx.push({ type: 'expense', amount: 48.2, category: 'Transport', date: mk(m, 8), description: 'Fuel station' });
+      tx.push({ type: 'expense', amount: 15.99, category: 'Subscriptions', date: mk(m, 11), description: 'Streaming service' });
+    }
+    tx.forEach((t) => (t.hash = hashTx(t), t.source = 'sample'));
+    return {
+      transactions: tx,
+      accounts: [{ name: 'Checking', type: 'Checking', balance: 4210.55 }, { name: 'High-yield savings', type: 'Savings', balance: 12500 }, { name: 'Retirement', type: 'Retirement', balance: 28400 }],
+      debts: [
+        { name: 'Credit card', type: 'Credit Card', balance: 3840, apr: 24.99, minPayment: 95 },
+        { name: 'Auto loan', type: 'Auto Loan', balance: 11200, apr: 6.4, minPayment: 310 },
+        { name: 'Student loan', type: 'Student Loan', balance: 18750, apr: 4.99, minPayment: 210 },
+      ],
+      bills: [
+        { name: 'Rent', amount: 1650, dueDay: 1, frequency: 'monthly', category: 'Housing', isSubscription: false, active: true },
+        { name: 'Electric', amount: 135, dueDay: 6, frequency: 'monthly', category: 'Utilities', isSubscription: false, active: true },
+        { name: 'Streaming service', amount: 15.99, dueDay: 11, frequency: 'monthly', category: 'Subscriptions', isSubscription: true, active: true },
+        { name: 'Music streaming', amount: 10.99, dueDay: now.getDate() + 2 > 28 ? 2 : now.getDate() + 2, frequency: 'monthly', category: 'Subscriptions', isSubscription: true, active: true },
+        { name: 'Cloud storage', amount: 29.99, dueDay: 14, dueMonth: 3, frequency: 'yearly', category: 'Subscriptions', isSubscription: true, active: true },
+      ],
+      budgets: [{ category: 'Groceries', limit: 450 }, { category: 'Dining', limit: 150 }, { category: 'Transport', limit: 120 }, { category: 'Utilities', limit: 160 }, { category: 'Shopping', limit: 200 }],
+    };
+  }
+
+  /* ============================================================ reminders */
+  async function checkBillReminders(data) {
+    if (!data.settings.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
+    const days = data.settings.reminderDays ?? 3; const today = todayISO();
+    const notified = data.settings.notified || {};
+    const due = data.bills.filter((b) => b.active !== false).map((b) => ({ b, st: billStatus(b) }))
+      .filter(({ b, st }) => !st.paid && st.daysLeft <= days && notified[b.id] !== `${st.currentDue}@${today}`);
+    if (!due.length) return;
+    const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+    for (const { b, st } of due) {
+      const body = `${b.name}: ${st.daysLeft < 0 ? 'overdue' : st.daysLeft === 0 ? 'due today' : `due in ${st.daysLeft} day${st.daysLeft > 1 ? 's' : ''}`}`;
+      const opts = { body, tag: `bill-${b.id}`, icon: './icon-192.png', badge: './icon-192.png' };
+      try { reg ? await reg.showNotification('Bill reminder', opts) : new Notification('Bill reminder', opts); } catch (_) {}
+      notified[b.id] = `${st.currentDue}@${today}`;
+    }
+    await DB.setSetting('notified', notified);
+  }
+
+  /* ================================================================= APP */
+  const TABS = [
+    { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
+    { id: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight' },
+    { id: 'upload', label: 'Upload', icon: 'Upload' },
+    { id: 'budget', label: 'Budget', aria: 'Budget & Debt', icon: 'PiggyBank' },
+    { id: 'settings', label: 'Settings', icon: 'Settings' },
+  ];
+
+  function App() {
+    const store = useFinanceData();
+    const { data, ready, error } = store;
+    const [tab, setTab] = useState(() => (location.hash.slice(1).split('/')[0]) || 'dashboard');
+    const [sub, setSub] = useState(() => location.hash.split('/')[1] || 'budget');
+    const [toastState, setToastState] = useState(null);
+    const [installPrompt, setInstallPrompt] = useState(null);
+    const [online, setOnline] = useState(navigator.onLine);
+    const toastTimer = useRef();
+
+    const toast = useCallback((msg, kind = 'ok') => { setToastState({ msg, kind }); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToastState(null), 2400); }, []);
+    const go = useCallback((t, s) => { setTab(t); if (s) setSub(s); window.scrollTo(0, 0); }, []);
+
+    useEffect(() => { history.replaceState(null, '', `#${tab}${tab === 'budget' ? '/' + sub : ''}`); }, [tab, sub]);
+    useEffect(() => { const h = () => { const [t, s] = location.hash.slice(1).split('/'); if (t) setTab(t); if (s) setSub(s); }; addEventListener('hashchange', h); return () => removeEventListener('hashchange', h); }, []);
+    useEffect(() => {
+      const bip = (e) => { e.preventDefault(); setInstallPrompt(e); };
+      const on = () => setOnline(true), off = () => setOnline(false);
+      addEventListener('beforeinstallprompt', bip); addEventListener('online', on); addEventListener('offline', off);
+      return () => { removeEventListener('beforeinstallprompt', bip); removeEventListener('online', on); removeEventListener('offline', off); };
+    }, []);
+
+    // Theme
+    useEffect(() => {
+      const mq = matchMedia('(prefers-color-scheme: dark)');
+      const apply = () => { const t = data.settings.theme || 'system'; document.documentElement.classList.toggle('dark', t === 'dark' || (t === 'system' && mq.matches)); };
+      apply(); mq.addEventListener('change', apply); return () => mq.removeEventListener('change', apply);
+    }, [data.settings.theme]);
+
+    // Reminders: on load and whenever the app regains focus
+    useEffect(() => {
+      if (!ready) return;
+      checkBillReminders(data);
+      const vis = () => document.visibilityState === 'visible' && checkBillReminders(data);
+      document.addEventListener('visibilitychange', vis); return () => document.removeEventListener('visibilitychange', vis);
+    }, [ready, data.bills, data.settings.notify, data.settings.reminderDays]);
+
+    const currency = data.settings.currency || 'USD';
+    const fmt = useMemo(() => {
+      const full = new Intl.NumberFormat(undefined, { style: 'currency', currency });
+      const compact = new Intl.NumberFormat(undefined, { style: 'currency', currency, notation: 'compact', maximumFractionDigits: 1 });
+      return (n, short) => (short && Math.abs(n) >= 10000 ? compact : full).format(Number(n) || 0);
+    }, [currency]);
+
+    const loadSample = useCallback(async () => {
+      const s = buildSample();
+      for (const [name, rows] of Object.entries(s)) await DB.bulkPut(name, rows);
+      await store.reload(); toast('Sample data loaded');
+    }, [store, toast]);
+    const install = async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; setInstallPrompt(null); };
+
+    const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install };
+
+    if (!ready) return <div id="boot">Opening Centric Wealth…</div>;
+    if (error) return <div className="p-6"><Card className="p-4"><p className="font-semibold text-rose-600">Storage unavailable</p><p className="text-sm text-slate-500 mt-1">{error}. Private-browsing modes in some browsers block IndexedDB.</p></Card></div>;
+
+    return (
+      <AppCtx.Provider value={ctx}>
+        <div className="min-h-full max-w-lg mx-auto">
+          {!online && <div className="pt-safe bg-slate-800 text-white text-xs text-center py-1.5">Offline — everything still works</div>}
+          <main className="px-4 pt-safe pb-28">
+            <div className="pt-3">
+              {tab === 'dashboard' && <Dashboard go={go} />}
+              {tab === 'transactions' && <Transactions />}
+              {tab === 'upload' && <UploadView />}
+              {tab === 'budget' && <BudgetDebt sub={sub} setSub={setSub} />}
+              {tab === 'settings' && <SettingsView />}
+            </div>
+          </main>
+
+          <nav className="fixed bottom-0 inset-x-0 z-40 border-t border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 backdrop-blur-lg pb-safe" aria-label="Main">
+            <div className="max-w-lg mx-auto grid grid-cols-5">
+              {TABS.map((t) => {
+                const active = tab === t.id;
+                return (
+                  <button key={t.id} onClick={() => go(t.id)} aria-label={t.aria || t.label} aria-current={active ? 'page' : undefined}
+                    className={cls('flex flex-col items-center justify-center gap-1 h-16 text-[11px] font-medium transition-colors', active ? 'text-brand-600 dark:text-brand-400' : 'text-slate-500 dark:text-slate-400')}>
+                    <span className={cls('grid place-items-center w-12 h-7 rounded-full transition-colors', active && 'bg-brand-100 dark:bg-brand-500/15')}><Icon name={t.icon} size={20} strokeWidth={active ? 2.4 : 2} /></span>
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+          <Toast toast={toastState} />
+        </div>
+      </AppCtx.Provider>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+  // Service worker for offline support (requires HTTPS or localhost — GitHub Pages is HTTPS).
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('SW registration failed', e)));
+  }
+  </script>
+</body>
+</html>

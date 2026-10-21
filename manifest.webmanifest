@@ -1,19 +1,51 @@
 {
-  "name": "Ledgerly — Private Finance",
-  "short_name": "Ledgerly",
-  "description": "Offline-first, on-device personal finance tracker.",
-  "start_url": "./",
+  "name": "Centric Wealth",
+  "short_name": "Centric Wealth",
+  "description": "Offline-first personal finance. All data stays on your device.",
+  "id": "./",
+  "start_url": "./#dashboard",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
+  "categories": [
+    "finance",
+    "productivity"
+  ],
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230f172a'/%3E%3Cpath d='M160 352V160h48v152h144v40z' fill='%2334d399'/%3E%3C/svg%3E",
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "./icon.svg",
       "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Add transaction",
+      "url": "./#transactions"
+    },
+    {
+      "name": "Bills",
+      "url": "./#budget/bills"
     }
   ]
 }
