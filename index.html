@@ -233,11 +233,11 @@
     const n = parseFloat(s); return isNaN(n) ? NaN : neg ? -n : n;
   };
 
-  const EXPENSE_CATEGORIES = ['Housing', 'Utilities', 'Groceries', 'Dining', 'Transport', 'Health', 'Insurance', 'Shopping', 'Entertainment', 'Subscriptions', 'Debt Payment', 'Education', 'Travel', 'Gifts', 'Other'];
-  const INCOME_CATEGORIES = ['Salary', 'Freelance', 'Interest', 'Refund', 'Gift', 'Other Income'];
+  const EXPENSE_CATEGORIES = ['Housing', 'Utilities', 'Groceries', 'Dining', 'Transport', 'Health', 'Insurance', 'Shopping', 'Entertainment', 'Subscriptions', 'Debt Payment', 'Education', 'Travel', 'Gifts', 'Personal Payments', 'Other'];
+  const INCOME_CATEGORIES = ['Salary', 'Freelance', 'Interest', 'Refund', 'Gift', 'Payment Received', 'Other Income'];
   const DEBT_TYPES = ['Credit Card', 'Student Loan', 'Auto Loan', 'Mortgage', 'Personal Loan', 'Medical', 'Other'];
   const ACCOUNT_TYPES = ['Checking', 'Savings', 'Cash', 'Investment', 'Retirement', 'Property', 'Other'];
-  const TRANSFER_CATEGORIES = ['Transfer', 'Card Payment', 'Card Credit'];
+  const TRANSFER_CATEGORIES = ['Transfer', 'Card Payment', 'Card Credit', 'Money Lent', 'Money Borrowed', 'Loan Repayment', 'Loan Repaid to Me'];
 
   /* ------------------------------------------------- bank vs credit accounts
      Bank accounts (checking/savings/cash) live in the `accounts` store; credit cards live in `debts`
@@ -245,13 +245,14 @@
      Imported ("ledger") accounts keep an anchor - a known balance on a date (statement ending balance,
      or one you typed) - and their balance = anchor + every tagged transaction after that date. */
   const BANK_TYPES = ['Checking', 'Savings', 'Cash'];
-  const isBankAccount = (a) => a.kind === 'bank' || (!a.kind && BANK_TYPES.includes(a.type));
+  const isBankAccount = (a) => a.kind === 'bank' || a.kind === 'cash' || (!a.kind && BANK_TYPES.includes(a.type)); // cash wallet counts as liquid cash
+  const isCashWallet = (a) => a.kind === 'cash';
   const isCardDebt = (d) => d.kind === 'credit' || d.type === 'Credit Card';
   const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
-  const acctTypeOf = (t) => (t.accountType === 'bank' || t.accountType === 'credit' ? t.accountType : null);
+  const acctTypeOf = (t) => (t.accountType === 'bank' || t.accountType === 'credit' || t.accountType === 'cash' ? t.accountType : null);
   const isMoneyIn = (t) => t.type === 'income' || (t.type === 'transfer' && t.direction === 'in');
   // Signed change to a balance: bank = cash in the account; credit = amount owed on the card.
-  const txEffect = (t, kind) => (kind === 'bank' ? 1 : -1) * (isMoneyIn(t) ? 1 : -1) * Math.abs(Number(t.amount) || 0);
+  const txEffect = (t, kind) => (kind === 'credit' ? -1 : 1) * (isMoneyIn(t) ? 1 : -1) * Math.abs(Number(t.amount) || 0);
   function ledgerBalance(acct, kind, txs) {
     let bal = Number(acct.anchorBalance) || 0;
     for (const t of txs) if (acctTypeOf(t) === kind && sameName(t.accountName, acct.name) && (!acct.anchorDate || t.date > acct.anchorDate)) bal += txEffect(t, kind);
@@ -533,7 +534,7 @@
         <div className="grid grid-cols-2 gap-3 mt-3">
           <SummaryCard icon="Scale" label="Net Worth" value={fmt(s.netWorth)} sub={`${fmt(s.assets, true)} assets\n${fmt(s.liabilities, true)} debt`} onClick={() => go('budget', 'assets')} />
           <SummaryCard icon="TrendingUp" tone="green" label="Monthly Income" value={fmt(s.income)} sub={(() => { const n = s.monthTx.filter((t) => t.type === 'income').length; return `${n} deposit${n === 1 ? '' : 's'}`; })()} onClick={() => go('transactions')} />
-          <SummaryCard icon="TrendingDown" tone="red" label="Monthly Expense" value={fmt(s.expense)} sub={savingsRate != null ? `Saving ${savingsRate}% of income` : 'No income logged yet'} onClick={() => go('transactions')} />
+          <SummaryCard icon="TrendingDown" tone="red" label="Monthly Expense" value={fmt(s.expense)} sub={savingsRate == null ? 'No income logged yet' : savingsRate < 0 ? 'More than income this month' : `Saving ${savingsRate}% of income`} onClick={() => go('transactions')} />
           <SummaryCard icon="Repeat" tone="violet" label="Active Subscriptions" value={String(s.subs.length)} sub={`${fmt(s.subsMonthly)}/mo\n${fmt(s.subsMonthly * 12, true)}/yr`} onClick={() => go('budget', 'bills')} />
         </div>
 
@@ -587,25 +588,25 @@
 
   /* ======================================= SPENDING BY ACCOUNT TYPE */
   const ACCOUNT_FILTERS = [{ value: 'all', label: 'All' }, { value: 'bank', label: 'Bank Accounts' }, { value: 'credit', label: 'Credit Cards' }];
-  const SEG_COLOR = { credit: 'bg-violet-500', bank: 'bg-sky-500', other: 'bg-slate-400 dark:bg-slate-500' };
+  const SEG_COLOR = { credit: 'bg-violet-500', bank: 'bg-sky-500', cash: 'bg-amber-500', other: 'bg-slate-400 dark:bg-slate-500' };
 
   function SpendingBreakdown() {
     const { data, fmt } = useApp();
     const [month, setMonth] = useState(monthKey(todayISO()));
     const [view, setView] = useState('all');
     const agg = useMemo(() => {
-      const by = {}; const tot = { bank: 0, credit: 0, other: 0 };
+      const by = {}; const tot = { bank: 0, credit: 0, cash: 0, other: 0 };
       data.transactions.filter((t) => t.type === 'expense' && monthKey(t.date) === month).forEach((t) => {
         const k = acctTypeOf(t) || 'other';
-        const c = (by[t.category] ||= { bank: 0, credit: 0, other: 0 });
+        const c = (by[t.category] ||= { bank: 0, credit: 0, cash: 0, other: 0 });
         c[k] += t.amount; tot[k] += t.amount;
       });
-      return { cats: Object.entries(by).map(([cat, v]) => ({ cat, ...v, total: v.bank + v.credit + v.other })), tot };
+      return { cats: Object.entries(by).map(([cat, v]) => ({ cat, ...v, total: v.bank + v.credit + v.cash + v.other })), tot };
     }, [data.transactions, month]);
     const val = (c) => (view === 'all' ? c.total : c[view]);
     const rows = agg.cats.filter((c) => val(c) > 0.004).sort((a, b) => val(b) - val(a));
     const max = rows.length ? val(rows[0]) : 1;
-    const all = agg.tot.bank + agg.tot.credit + agg.tot.other;
+    const all = agg.tot.bank + agg.tot.credit + agg.tot.cash + agg.tot.other;
     const share = (k) => (all > 0 ? Math.round((agg.tot[k] / all) * 100) : 0);
 
     return (
@@ -621,14 +622,15 @@
             <div className="rounded-xl bg-violet-50 dark:bg-violet-500/10 p-3"><p className="text-xs text-violet-700 dark:text-violet-300 inline-flex items-center gap-1"><Icon name="CreditCard" size={13} />Credit cards</p><p className="num font-bold">{fmt(agg.tot.credit)}</p><p className="text-[11px] text-slate-500">{share('credit')}% of spending</p></div>
             <div className="rounded-xl bg-sky-50 dark:bg-sky-500/10 p-3"><p className="text-xs text-sky-700 dark:text-sky-300 inline-flex items-center gap-1"><Icon name="Landmark" size={13} />Bank accounts</p><p className="num font-bold">{fmt(agg.tot.bank)}</p><p className="text-[11px] text-slate-500">{share('bank')}% of spending</p></div>
           </div>
-          {agg.tot.other > 0.004 && <p className="text-xs text-slate-500 mt-2">Plus {fmt(agg.tot.other)} not linked to an account (manual entries).</p>}
+          {agg.tot.cash > 0.004 && <p className="text-xs text-slate-500 mt-2 inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-amber-500 inline-block" />Plus {fmt(agg.tot.cash)} in cash ({share('cash')}%).</p>}
+          {agg.tot.other > 0.004 && <p className="text-xs text-slate-500 mt-1">Plus {fmt(agg.tot.other)} not linked to an account.</p>}
           <div className="mt-4 space-y-3">
             {rows.length === 0 ? <p className="text-sm text-slate-500">No {view === 'bank' ? 'bank ' : view === 'credit' ? 'credit card ' : ''}spending in {monthLabel(month, { month: 'long' })}.</p> :
               rows.slice(0, 8).map((c) => (
                 <div key={c.cat}>
                   <div className="flex justify-between text-sm mb-1"><span>{c.cat}</span><span className="num font-medium">{fmt(val(c))}</span></div>
                   <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
-                    {(view === 'all' ? ['credit', 'bank', 'other'] : [view]).map((k) => c[k] > 0 && <div key={k} className={SEG_COLOR[k]} style={{ width: `${(c[k] / max) * 100}%` }} />)}
+                    {(view === 'all' ? ['credit', 'bank', 'cash', 'other'] : [view]).map((k) => c[k] > 0 && <div key={k} className={SEG_COLOR[k]} style={{ width: `${(c[k] / max) * 100}%` }} />)}
                   </div>
                   {view === 'all' && c.credit > 0 && c.bank > 0 && <p className="num text-[11px] text-slate-500 mt-1">Cards {fmt(c.credit)} · Bank {fmt(c.bank)}</p>}
                 </div>
@@ -743,17 +745,17 @@
   /* ========================================================= TRANSACTIONS */
   function TxRow({ t, onClick }) {
     const { fmt } = useApp();
-    const moneyIn = isMoneyIn(t), transfer = t.type === 'transfer', income = t.type === 'income', card = acctTypeOf(t) === 'credit';
-    const icon = transfer ? 'ArrowLeftRight' : income ? 'ArrowDownLeft' : card ? 'CreditCard' : 'ArrowUpRight';
+    const moneyIn = isMoneyIn(t), transfer = t.type === 'transfer', income = t.type === 'income', card = acctTypeOf(t) === 'credit', cash = acctTypeOf(t) === 'cash';
+    const icon = transfer ? (t.counterparty ? 'Send' : 'ArrowLeftRight') : income ? 'ArrowDownLeft' : card ? 'CreditCard' : cash ? 'Banknote' : 'ArrowUpRight';
     const tone = income ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
       : transfer ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
-      : card ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
+      : card ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' : cash ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
     return (
       <button onClick={onClick} className="w-full flex items-center gap-3 p-3.5 text-left active:bg-slate-50 dark:active:bg-slate-800/50">
         <div className={cls('w-10 h-10 rounded-xl grid place-items-center shrink-0', tone)}><Icon name={icon} size={18} /></div>
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{t.description || t.category}</p>
-          <p className="text-xs text-slate-500 truncate">{[t.category, t.accountName, prettyDate(t.date)].filter(Boolean).join(' · ')}</p>
+          <p className="text-xs text-slate-500 truncate">{[t.counterparty, t.category, t.accountName, prettyDate(t.date)].filter(Boolean).join(' · ')}</p>
         </div>
         <p className={cls('num font-semibold', income && 'text-emerald-600 dark:text-emerald-400', transfer && 'text-slate-500 dark:text-slate-400')}>{moneyIn ? '+' : '−'}{fmt(t.amount)}</p>
       </button>
@@ -768,7 +770,7 @@
     const cats = f.type === 'income' ? INCOME_CATEGORIES : f.type === 'transfer' ? TRANSFER_CATEGORIES : EXPENSE_CATEGORIES;
     useEffect(() => { if (!cats.includes(f.category)) setF((p) => ({ ...p, category: p.type === 'transfer' && credit ? 'Card Payment' : cats[0] })); }, [f.type, f.accountType]);
     const acctOptions = [{ value: '', label: 'No account (cash / other)' },
-      ...data.accounts.filter(isBankAccount).map((a) => ({ value: `bank|${a.name}`, label: `${a.name} · bank` })),
+      ...data.accounts.filter(isBankAccount).map((a) => ({ value: `${isCashWallet(a) ? 'cash' : 'bank'}|${a.name}`, label: `${a.name} · ${isCashWallet(a) ? 'cash' : 'bank'}` })),
       ...data.debts.filter(isCardDebt).map((d) => ({ value: `credit|${d.name}`, label: `${d.name} · card` }))];
     const acctValue = f.accountType ? `${f.accountType}|${f.accountName}` : '';
     const pickAccount = (e) => {
@@ -813,14 +815,16 @@
     const [q, setQ] = useState('');
     const [type, setType] = useState('all');
     const [acct, setAcct] = useState('all');
+    const [logOnly, setLogOnly] = useState(false);
     const [editing, setEditing] = useState(null); // null | 'new' | tx
 
     const list = useMemo(() => data.transactions
       .filter((t) => monthKey(t.date) === month)
       .filter((t) => type === 'all' || t.type === type)
       .filter((t) => acct === 'all' || acctTypeOf(t) === acct)
+      .filter((t) => !logOnly || t.source === 'quick-log' || acctTypeOf(t) === 'cash')
       .filter((t) => !q || `${t.description} ${t.category} ${t.accountName || ''}`.toLowerCase().includes(q.toLowerCase()))
-      .sort((a, b) => b.date.localeCompare(a.date)), [data.transactions, month, q, type, acct]);
+      .sort((a, b) => b.date.localeCompare(a.date)), [data.transactions, month, q, type, acct, logOnly]);
     const groups = useMemo(() => list.reduce((g, t) => ((g[t.date] ||= []).push(t), g), {}), [list]);
     const totIn = list.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const totOut = list.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
@@ -846,6 +850,7 @@
           <input className={cls(inputCls, 'pl-10')} placeholder="Search description, category or account" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div className="mt-3"><Segmented value={acct} onChange={setAcct} options={ACCOUNT_FILTERS} /></div>
+        <button onClick={() => setLogOnly(!logOnly)} className={cls('mt-2 text-xs font-semibold px-3 py-1.5 rounded-full border inline-flex items-center gap-1.5', logOnly ? 'border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300' : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300')}><Icon name="Banknote" size={14} />Cash & transfer log only</button>
         <div className="mt-2"><Segmented value={type} onChange={setType} options={[{ value: 'all', label: 'All types' }, { value: 'expense', label: acct === 'credit' ? 'Charges' : 'Expenses' }, { value: 'income', label: 'Income' }, { value: 'transfer', label: acct === 'credit' ? 'Payments' : 'Transfers' }]} /></div>
 
         {list.length === 0 ? <Empty icon="Receipt" title="No transactions" body="Nothing matches this month and filter." action={<Button variant="secondary" onClick={() => setEditing('new')}>Add one</Button>} /> :
@@ -1547,6 +1552,146 @@
     );
   }
 
+  /* ============================================== QUICK LOG (cash & transfers) */
+  const QL_KINDS = [
+    { value: 'cash-expense', label: 'Cash Expense', icon: 'Banknote', tone: 'amber' },
+    { value: 'cash-income', label: 'Cash Income', icon: 'HandCoins', tone: 'emerald' },
+    { value: 'sent', label: 'Money Sent (Transfer)', icon: 'Send', tone: 'rose' },
+    { value: 'received', label: 'Money Received', icon: 'ArrowDownToLine', tone: 'sky' },
+  ];
+  const QL_SOURCES = [{ value: 'cash', label: 'Cash Wallet', icon: 'Wallet' }, { value: 'bank', label: 'Bank Account', icon: 'Landmark' }, { value: 'credit', label: 'Credit Card', icon: 'CreditCard' }];
+  // What a transfer was for decides whether it counts as income/spending or only moves balances.
+  const QL_PURPOSES = {
+    sent: [
+      { value: 'payment', label: 'Paid someone (bill split, rent share…)', type: 'expense', category: 'Personal Payments' },
+      { value: 'gift', label: 'Gift', type: 'expense', category: 'Gifts' },
+      { value: 'lent', label: 'Lent money (they owe me)', type: 'transfer', category: 'Money Lent', person: true },
+      { value: 'repay', label: 'Repaid money I borrowed', type: 'transfer', category: 'Loan Repayment', person: true },
+      { value: 'own', label: 'Moved to my own account', type: 'transfer', category: 'Transfer' },
+    ],
+    received: [
+      { value: 'payment', label: 'Someone paid me', type: 'income', category: 'Payment Received' },
+      { value: 'gift', label: 'Gift', type: 'income', category: 'Gift' },
+      { value: 'borrowed', label: 'Borrowed money (I owe them)', type: 'transfer', category: 'Money Borrowed', person: true },
+      { value: 'repaid', label: 'They repaid money I lent', type: 'transfer', category: 'Loan Repaid to Me', person: true },
+      { value: 'own', label: 'From my own account', type: 'transfer', category: 'Transfer' },
+    ],
+  };
+  const TONE = {
+    amber: 'border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300', emerald: 'border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300',
+    rose: 'border-rose-500 bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300', sky: 'border-sky-500 bg-sky-50 text-sky-800 dark:bg-sky-500/10 dark:text-sky-300',
+  };
+
+  function QuickLogForm({ onDone }) {
+    const { data, save, toast, fmt } = useApp();
+    const [kind, setKind] = useState('cash-expense');
+    const [source, setSource] = useState('cash');
+    const banks = data.accounts.filter((a) => isBankAccount(a) && !isCashWallet(a)), cards = data.debts.filter(isCardDebt);
+    const wallet = data.accounts.find(isCashWallet);
+    const [acctName, setAcctName] = useState('');
+    const [amount, setAmount] = useState('');
+    const [date, setDate] = useState(todayISO());
+    const [category, setCategory] = useState('Dining');
+    const [purpose, setPurpose] = useState('payment');
+    const [person, setPerson] = useState('');
+    const [notes, setNotes] = useState('');
+    const [startCash, setStartCash] = useState('');
+
+    const isTransfer = kind === 'sent' || kind === 'received';
+    const purposes = isTransfer ? QL_PURPOSES[kind] : [];
+    const p = purposes.find((x) => x.value === purpose) || purposes[0];
+    const cats = kind === 'cash-expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
+    useEffect(() => { if (!isTransfer && !cats.includes(category)) setCategory(kind === 'cash-expense' ? 'Dining' : 'Other Income'); if (isTransfer && !purposes.some((x) => x.value === purpose)) setPurpose('payment'); }, [kind]);
+    const accounts = source === 'bank' ? banks : source === 'credit' ? cards : [];
+    useEffect(() => { setAcctName(accounts[0] ? accounts[0].name : ''); }, [source]);
+    const accountName = source === 'cash' ? (wallet ? wallet.name : 'Cash Wallet') : (acctName || (source === 'bank' ? 'Bank Account' : 'Credit Card'));
+    const people = useMemo(() => [...new Set(data.transactions.map((t) => t.counterparty).filter(Boolean))].sort(), [data.transactions]);
+
+    const submit = async (e) => {
+      e.preventDefault();
+      const amt = round2(Math.abs(parseAmount(amount)));
+      if (!amt) return toast('Enter an amount', 'error');
+      if (isTransfer && p.person && !person.trim()) return toast('Add who the money went to or came from', 'error');
+      const type = isTransfer ? p.type : kind === 'cash-expense' ? 'expense' : 'income';
+      const direction = kind === 'cash-expense' || kind === 'sent' ? 'out' : 'in';
+      const cat = isTransfer ? p.category : category;
+      const who = person.trim();
+      const description = notes.trim() || (isTransfer ? `${kind === 'sent' ? 'Sent to' : 'Received from'} ${who || 'someone'}` : `${kind === 'cash-expense' ? 'Cash' : 'Cash received'} · ${cat}`);
+      // First cash entry: create the wallet. An optional starting amount becomes its opening balance.
+      if (source === 'cash' && !wallet) {
+        const start = startCash.trim() === '' ? null : round2(parseAmount(startCash));
+        await save('accounts', { name: 'Cash Wallet', type: 'Cash', kind: 'cash', balance: 0, ledger: true, anchorBalance: start || 0, anchorDate: null, balanceSource: start != null && !isNaN(start) ? 'manual' : 'estimated' });
+      }
+      const rec = { type, direction, amount: amt, date, category: cat, description, counterparty: who || undefined, purpose: isTransfer ? p.value : undefined,
+        entryKind: kind, accountType: source, accountName, source: 'quick-log', manual: true };
+      rec.hash = hashTx(rec);
+      await save('transactions', rec);
+      toast(`${QL_KINDS.find((k) => k.value === kind).label.replace(' (Transfer)', '')} of ${fmt(amt)} logged`);
+      onDone();
+    };
+
+    const Chip = ({ active, onClick, icon, label, tone }) => (
+      <button type="button" onClick={onClick} className={cls('rounded-xl border-2 px-2.5 py-2.5 text-left text-sm font-semibold flex items-center gap-2 transition-colors', active ? TONE[tone] || 'border-brand-500 bg-brand-50 text-brand-800 dark:bg-brand-500/10 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300')}>
+        <Icon name={icon} size={16} className="shrink-0" /><span className="leading-tight">{label}</span>
+      </button>
+    );
+
+    return (
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <p className="text-[13px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">Transaction type</p>
+          <div className="grid grid-cols-2 gap-2">{QL_KINDS.map((k) => <Chip key={k.value} active={kind === k.value} onClick={() => setKind(k.value)} icon={k.icon} label={k.label} tone={k.tone} />)}</div>
+        </div>
+        <div>
+          <p className="text-[13px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">Account / source</p>
+          <div className="grid grid-cols-3 gap-2">{QL_SOURCES.map((s) => <Chip key={s.value} active={source === s.value} onClick={() => setSource(s.value)} icon={s.icon} label={s.label} />)}</div>
+          {source !== 'cash' && (accounts.length > 1
+            ? <div className="mt-2"><Select options={accounts.map((a) => a.name)} value={acctName} onChange={(e) => setAcctName(e.target.value)} /></div>
+            : <p className="text-xs text-slate-500 mt-1.5">{accounts.length ? `Logged to ${accounts[0].name}.` : `No ${source === 'bank' ? 'bank account' : 'credit card'} yet; saved as “${accountName}”.`}</p>)}
+          {source === 'cash' && !wallet && (
+            <div className="mt-2"><Field label="Cash in your wallet before this (optional)" hint="Creates your Cash Wallet. Leave blank to track only what you log."><Input inputMode="decimal" placeholder="0.00" value={startCash} onChange={(e) => setStartCash(e.target.value)} /></Field></div>
+          )}
+          {source === 'cash' && wallet && <p className="text-xs text-slate-500 mt-1.5">Cash Wallet balance: {fmt(wallet.balance)}</p>}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Amount"><Input inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus /></Field>
+          <Field label="Date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        </div>
+        {isTransfer ? (
+          <>
+            <Field label="What was it for?"><Select options={purposes.map((x) => ({ value: x.value, label: x.label }))} value={p.value} onChange={(e) => setPurpose(e.target.value)} /></Field>
+            <Field label={kind === 'sent' ? `To (person)${p.person ? '' : ' - optional'}` : `From (person)${p.person ? '' : ' - optional'}`}>
+              <Input value={person} onChange={(e) => setPerson(e.target.value)} placeholder="e.g. Sam" list="ql-people" autoComplete="off" />
+              <datalist id="ql-people">{people.map((n) => <option key={n} value={n} />)}</datalist>
+            </Field>
+            <p className="text-xs text-slate-500 -mt-2">{p.type === 'transfer' ? 'Changes your balances but isn’t counted as income or spending.' : p.type === 'expense' ? `Counts as spending (${p.category}).` : `Counts as income (${p.category}).`}</p>
+          </>
+        ) : (
+          <Field label="Category"><Select options={cats} value={category} onChange={(e) => setCategory(e.target.value)} /></Field>
+        )}
+        <Field label="Notes / description (optional)"><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={kind === 'cash-expense' ? 'e.g. Farmers market' : isTransfer ? 'e.g. Concert tickets' : 'e.g. Sold old bike'} /></Field>
+        <Button type="submit" className="w-full">Save entry</Button>
+      </form>
+    );
+  }
+
+  // Floating "Quick Log" button + sheet, shown on the main screens.
+  function QuickLogFab() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <div className="fixed inset-x-0 z-30 pointer-events-none" style={{ bottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
+          <div className="max-w-lg mx-auto px-4 flex justify-end">
+            <button onClick={() => setOpen(true)} aria-label="Quick Log Entry" className="pointer-events-auto h-14 pl-4 pr-5 rounded-2xl bg-brand-600 text-white shadow-lg shadow-brand-600/30 font-semibold inline-flex items-center gap-2 active:scale-95 transition-transform">
+              <Icon name="Plus" size={22} strokeWidth={2.5} />Quick Log
+            </button>
+          </div>
+        </div>
+        <Sheet open={open} title="Quick Log Entry" onClose={() => setOpen(false)}>{open && <QuickLogForm onDone={() => setOpen(false)} />}</Sheet>
+      </>
+    );
+  }
+
   /* ====================================================== MONTHLY REPORT */
   // Small Markdown renderer for the report preview: headings, tables, **bold**, _italic_.
   function inlineMd(s) { return s.split(/(\*\*[^*]+\*\*|_[^_]+_)/g).map((p, i) => p.startsWith('**') ? <b key={i}>{p.slice(2, -2)}</b> : /^_[^_]+_$/.test(p) ? <i key={i}>{p.slice(1, -1)}</i> : p); }
@@ -1570,20 +1715,27 @@
   function MonthlyReportCard() {
     const { data, fmt, toast } = useApp();
     const [month, setMonth] = useState(monthKey(todayISO()));
-    const [format, setFormat] = useState('md');
+    const [format, setFormat] = useState('pdf');
+    const [busy, setBusy] = useState(false);
     const [preview, setPreview] = useState(null);
     const [last, setLast] = useState(null);
     const r = useMemo(() => MonthlyReport.aggregate(data, month), [data, month]);
     const name = MonthlyReport.fileName(month, format);
     const canShare = useMemo(() => MonthlyReport.canShareFiles(), []);
 
-    const doDownload = () => {
-      try { const f = MonthlyReport.download(data, month, format); setLast(f.name); toast(`Downloading ${f.name}`); }
-      catch (e) { toast(`Couldn’t create the file: ${e.message}`, 'error'); }
+    const doDownload = async () => {
+      setBusy(true);
+      try {
+        const f = format === 'pdf' ? await MonthlyReport.downloadPdf(data, month) : MonthlyReport.download(data, month, format);
+        setLast(f.name); toast(`Downloading ${f.name}`);
+      } catch (e) { toast(`Couldn’t create the file: ${e.message}`, 'error'); }
+      setBusy(false);
     };
     const doShare = async () => {
-      try { if (!(await MonthlyReport.share(data, month, format))) doDownload(); }
+      setBusy(true);
+      try { if (!(await MonthlyReport.share(data, month, format))) await doDownload(); }
       catch (e) { toast(e.message, 'error'); }
+      setBusy(false);
     };
 
     return (
@@ -1599,13 +1751,14 @@
               <div key={l} className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2.5 px-1"><p className="text-[11px] text-slate-500">{l}</p><p className={cls('num font-bold text-sm', c)}>{fmt(v, true)}</p></div>
             ))}
           </div>
-          <p className="text-xs text-slate-500 mt-3">Includes bank balances, credit card debt, income, expenses, {r.subscriptions.length} subscription{r.subscriptions.length === 1 ? '' : 's'} and {r.categories.length} spending categor{r.categories.length === 1 ? 'y' : 'ies'}. Created on this device.</p>
-          <div className="mt-3"><Segmented value={format} onChange={setFormat} options={[{ value: 'md', label: 'Markdown (.md)' }, { value: 'txt', label: 'Plain text (.txt)' }]} /></div>
-          <Button className="w-full mt-3" onClick={doDownload}><Icon name="Download" size={16} />Download Monthly Report</Button>
+          <p className="text-xs text-slate-500 mt-3">Balances, income, expenses, {r.recurring.length} recurring payment{r.recurring.length === 1 ? '' : 's'}, {r.categories.length} spending categor{r.categories.length === 1 ? 'y' : 'ies'} and {r.logs.length} cash & transfer entr{r.logs.length === 1 ? 'y' : 'ies'}. Created on this device.</p>
+          <div className="mt-3"><Segmented value={format} onChange={setFormat} options={[{ value: 'pdf', label: 'PDF' }, { value: 'md', label: 'Markdown' }, { value: 'txt', label: 'Text' }]} /></div>
+          <Button className="w-full mt-3" disabled={busy} onClick={doDownload}><Icon name={busy ? 'Hourglass' : format === 'pdf' ? 'FileDown' : 'Download'} size={16} />{busy ? 'Creating…' : format === 'pdf' ? 'Download PDF Report' : 'Download Monthly Report'}</Button>
           <div className="flex gap-2 mt-2">
-            <Button variant="secondary" className="flex-1" onClick={() => setPreview(MonthlyReport.build(data, month, format))}><Icon name="Eye" size={16} />Preview</Button>
-            {canShare && <Button variant="secondary" className="flex-1" onClick={doShare}><Icon name="Share" size={16} />Share / Save to Files</Button>}
+            {format !== 'pdf' && <Button variant="secondary" className="flex-1" onClick={() => setPreview(MonthlyReport.build(data, month, format))}><Icon name="Eye" size={16} />Preview</Button>}
+            {canShare && <Button variant="secondary" className="flex-1" disabled={busy} onClick={doShare}><Icon name="Share" size={16} />Share / Save to Files</Button>}
           </div>
+          {format === 'pdf' && <p className="text-[11px] text-slate-500 mt-2">The PDF tool downloads once (about 450 KB), then works offline.</p>}
           <p className="text-[11px] text-slate-500 mt-2 break-all">{last ? `Saved as ${last} in your Downloads.` : `File name: ${name}`}</p>
         </Card>
         <Sheet open={preview != null} title={name} onClose={() => setPreview(null)}>
@@ -1813,7 +1966,7 @@
         for (const [storeName, list, kind] of [['accounts', data.accounts, 'bank'], ['debts', data.debts, 'credit']]) {
           for (const a of list) {
             if (!a.ledger) continue;
-            const b = ledgerBalance(a, kind, data.transactions);
+            const b = ledgerBalance(a, isCashWallet(a) ? 'cash' : kind, data.transactions);
             if (Math.abs(b - (Number(a.balance) || 0)) > 0.004) { await DB.put(storeName, { ...a, balance: b }); changed = true; }
           }
         }
@@ -1873,7 +2026,7 @@
       <AppCtx.Provider value={ctx}>
         <div className="min-h-full max-w-lg mx-auto">
           {!online && <div className="pt-safe bg-slate-800 text-white text-xs text-center py-1.5">Offline — everything still works</div>}
-          <main className="px-4 pt-safe pb-28">
+          <main className={cls('px-4 pt-safe', tab === 'dashboard' || tab === 'transactions' ? 'pb-48' : 'pb-28')}>
             <div className="pt-3">
               {tab === 'dashboard' && <Dashboard go={go} />}
               {tab === 'transactions' && <Transactions />}
@@ -1898,6 +2051,7 @@
               })}
             </div>
           </nav>
+          {(tab === 'dashboard' || tab === 'transactions') && <QuickLogFab />}
           <Toast toast={toastState} />
         </div>
       </AppCtx.Provider>

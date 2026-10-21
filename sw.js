@@ -1,5 +1,5 @@
 /* Centric Wealth service worker — offline-first caching. Bump VERSION on every deploy. */
-const VERSION = 'v1.6.0';
+const VERSION = 'v1.7.0';
 const CACHE = `centric-wealth-${VERSION}`;
 
 const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js', './recurring-scanner.js', './advisor-engine.js', './monthly-report.js'];
@@ -13,6 +13,9 @@ const CDN = [
   'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs',
   'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs',
   'https://cdn.jsdelivr.net/npm/papaparse@5.5.3/papaparse.min.js',
+  // PDF report (monthly-report.js)
+  'https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js',
+  'https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.9/dist/jspdf.plugin.autotable.min.js',
 ];
 
 self.addEventListener('install', (event) => {

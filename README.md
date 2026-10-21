@@ -105,17 +105,45 @@ A card payment appears on both statements. Both copies are stored as transfers, 
 
 **Activity:** the transaction list has the same three tabs.
 
-## Monthly report download (`monthly-report.js`)
-The **Dashboard** has a **Monthly report** card. Pick a month and a format, then tap **Download Monthly Report**. The app builds the file on the device and saves it straight to your Downloads, for example `Financial_Report_October_2026.md`. No server or API is involved.
+## Monthly report: PDF, Markdown or text (`monthly-report.js`)
+The **Dashboard** has a **Monthly report** card. Pick a month, choose **PDF**, **Markdown** or **Text**, then tap **Download PDF Report** (or **Download Monthly Report** for the other formats). The file is built on the device and saved straight to Downloads, e.g. `Financial_Report_October_2026.pdf`. No server or API is involved.
 
-- **Contents:**
-  - income and expenses (net cash flow and savings rate);
-  - every bank balance and credit card balance, with combined net balance;
-  - spending split between cards and bank;
-  - active subscriptions with their monthly cost;
-  - a category breakdown split by account type.
-- **Formats:** Markdown (`.md`, renders as tables in most notes apps and on GitHub) or plain text (`.txt`, aligned columns that read well anywhere).
-- **Preview** shows the report in the app first.
-- **Share / Save to Files** appears on phones that support sharing files, notably iPhone. It opens the system share sheet, which is the most reliable way to save into the Files app.
-- **How it works:** `MonthlyReport.build(data, 'YYYY-MM', 'md' | 'txt')` returns the text, and `MonthlyReport.download(...)` creates a Blob and clicks a temporary `<a download>` link.
+### What the PDF contains
+- **Summary cards:** Total Bank Balances (including the cash wallet), Credit Card Debt, Net Balance, Monthly Income, Monthly Expenses, and Net Cash Flow.
+- **Balances by account.**
+- **Category Breakdown:** a stacked bar chart split into card, bank and cash spending, plus a table.
+- **Flagged Subscriptions & Recurring Payments:** each payment's billing cycle, last charge, next due date, monthly cost, and flags such as price increases.
+- **Cash & Transfer Logs:**
+  - totals for cash spent, cash received, money sent and money received;
+  - every Quick Log entry for the month;
+  - who still owes whom from money lent or borrowed.
+
+### How it works
+- The PDF uses **jsPDF 4.2.1** and **jsPDF-AutoTable 5.0.9** from jsDelivr. The service worker caches both (about 450 KB), so PDF reports work offline after the app has been installed or opened once online.
+- `MonthlyReport.downloadPdf(data, 'YYYY-MM')` creates the PDF.
+- `MonthlyReport.download(data, 'YYYY-MM', 'md' | 'txt')` creates the Markdown or text versions.
+- **Share / Save to Files** appears on phones that support sharing files, notably iPhone.
+
+## Quick Log: cash and money transfers
+The **Quick Log** button floats on the Dashboard and Activity screens. Use it for anything that isn't on a statement.
+
+| Field | Options |
+|---|---|
+| Transaction type | Cash Expense, Cash Income, Money Sent (Transfer), Money Received |
+| Account / source | Cash Wallet, Bank Account, Credit Card |
+| Details | Amount, date, category, notes; for transfers, the person and what it was for |
+
+**How entries count:**
+
+| Entry | Counts as |
+|---|---|
+| Cash expense, paying someone, gift sent | Spending |
+| Cash income, someone paying you, gift received | Income |
+| Lending, borrowing, repayments, moves between your own accounts | Balance change only, tracked as who owes whom |
+
+**Where entries go:**
+- Entries are saved in IndexedDB with the statement transactions, tagged `source: 'quick-log'`, `entryKind`, `accountType` (`cash`, `bank` or `credit`) and `counterparty`.
+- They flow into budgets, the Advisor, the Dashboard totals and every report format.
+- The first cash entry creates a **Cash Wallet** account, with an optional starting amount. Its balance counts as liquid cash.
+- In Activity, the **Cash & transfer log only** filter shows just these entries.
 
