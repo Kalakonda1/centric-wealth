@@ -152,10 +152,13 @@
     .pop-up { animation: popUp 1.9s ease-out forwards; }
     @keyframes glowRing { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,.45); } 100% { box-shadow: 0 0 0 16px rgba(16,185,129,0); } }
     .glow { animation: glowRing 1.1s ease-out; }
+    /* Card due within 3 days or overdue: the badge pulses */
+    @keyframes pulseRed { 0% { box-shadow: 0 0 0 0 rgba(225,29,72,.55); } 70% { box-shadow: 0 0 0 9px rgba(225,29,72,0); } 100% { box-shadow: 0 0 0 0 rgba(225,29,72,0); } }
+    .pulse-red { animation: pulseRed 1.6s ease-out infinite; }
 
     @media (prefers-reduced-motion: reduce) {
       .stagger > div > *:not([role=dialog]), .rise-list > *, .fade-in, .sheet-in, .sheet-out, .backdrop-in, .backdrop-out, .toast-in, .fab-in, .skeleton,
-      .wave-a, .wave-b, .pop-up, .glow, .grow-bar.liquid::after { animation: none !important; }
+      .wave-a, .wave-b, .pop-up, .glow, .pulse-red, .grow-bar.liquid::after { animation: none !important; }
       .grow-bar, .press, .lift, .accordion { transition: none !important; }
     }
     #boot { position: fixed; inset: 0; display: grid; place-items: center; font: 14px system-ui; color: #64748b; }
@@ -723,6 +726,8 @@
           <SummaryCard icon="TrendingDown" tone="red" label="Monthly Expense" amount={s.expense} sub={savingsRate == null ? 'No income logged yet' : savingsRate < 0 ? 'More than income this month' : `Saving ${savingsRate}% of income`} onClick={() => go('transactions')} />
           <SummaryCard icon="Repeat" tone="violet" label="Active Subscriptions" value={String(s.subs.length)} sub={`${fmt(s.subsMonthly)}/mo\n${fmt(s.subsMonthly * 12, true)}/yr`} onClick={() => go('budget', 'bills')} />
         </div>
+
+        <CardDueTracker />
 
         <Card className="mt-3 p-4">
           <div className="flex items-baseline justify-between">
@@ -1319,7 +1324,8 @@
   }
 
   function DebtTab() {
-    const { data, save, remove, fmt, toast } = useApp();
+    const { data, save, remove, fmt, toast, openCards } = useApp();
+    const cardInfo = useCards();
     const [edit, setEdit] = useState(null);
     const [pay, setPay] = useState(null);
     const [extra, setExtra] = useState(() => String(data.settings.debtExtra ?? 100));
@@ -1354,14 +1360,20 @@
           <p className="num text-xs text-slate-500 mt-1">{fmt(minTotal)}/mo in minimum payments</p>
         </Card>
 
-        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', type: 'Credit Card', balance: '', apr: '', minPayment: '' })}>+ Add</button>}>Accounts</SectionTitle>
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', type: 'Personal Loan', balance: '', apr: '', minPayment: '' })}>+ Add loan</button>}>Accounts</SectionTitle>
+        <button onClick={() => openCards({})} className="press w-full card flex items-center gap-3 p-3.5 mb-3 text-left">
+          <div className="w-10 h-10 rounded-xl grid place-items-center bg-gradient-to-br from-sky-500/20 to-sky-500/5 text-sky-700 dark:text-sky-400"><Icon name="CreditCard" size={18} /></div>
+          <div className="flex-1 min-w-0"><p className="font-semibold">Manage credit cards</p><p className="text-xs text-slate-500">Add cards, limits and payment due dates</p></div>
+          <Icon name="ChevronRight" size={18} className="text-slate-400" />
+        </button>
         {data.debts.length === 0 ? <Card><Empty icon="CreditCard" title="No debts tracked" body="Add cards and loans to plan your payoff." /></Card> :
           <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
             {data.debts.map((d) => (
               <div key={d.id} className="flex items-center gap-3 p-3.5">
-                <button className="press flex-1 min-w-0 text-left flex items-center gap-3" onClick={() => setEdit({ ...d, balance: String(d.balance), apr: String(d.apr), minPayment: String(d.minPayment) })}>
-                  <div className="w-10 h-10 rounded-xl grid place-items-center bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400"><Icon name="CreditCard" size={18} /></div>
-                  <div className="min-w-0"><p className="font-medium truncate">{d.name}</p><p className="num text-xs text-slate-500">{Number(d.apr) > 0 ? `${d.apr}% APR` : <span className="text-amber-600">APR not set</span>} · min {fmt(d.minPayment)}</p>{d.ledger && <p className="text-[11px] text-slate-400">{balanceNote(d)}</p>}</div>
+                <button className="press flex-1 min-w-0 text-left flex items-center gap-3" onClick={() => (isCardDebt(d) ? openCards({ edit: d.id }) : setEdit({ ...d, balance: String(d.balance), apr: String(d.apr), minPayment: String(d.minPayment) }))}>
+                  {isCardDebt(d) ? <CardChip c={d} size="sm" /> : <div className="w-10 h-10 rounded-xl grid place-items-center bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400"><Icon name="Landmark" size={18} /></div>}
+                  <div className="min-w-0"><p className="font-medium truncate">{d.name}{d.last4 && <span className="num text-slate-400 font-medium"> ••{d.last4}</span>}</p>
+                    {(() => { const ci = cardInfo.find((c) => c.id === d.id); return ci && ci.status.set && <div className="my-0.5"><DueBadge st={ci.status} /></div>; })()}<p className="num text-xs text-slate-500">{Number(d.apr) > 0 ? `${d.apr}% APR` : <span className="text-amber-600">APR not set</span>} · min {fmt(d.minPayment)}</p>{d.ledger && <p className="text-[11px] text-slate-400">{balanceNote(d)}</p>}</div>
                 </button>
                 <div className="text-right"><p className="num font-semibold">{fmt(d.balance)}</p><button className="press text-xs font-semibold text-brand-700 dark:text-brand-400" onClick={() => setPay({ id: d.id, name: d.name, amount: String(d.minPayment || '') })}>Log payment</button></div>
               </div>
@@ -1996,6 +2008,239 @@
     );
   }
 
+  /* ===================================================== CREDIT CARDS */
+  const CARD_COLORS = [['#334155', '#0f172a'], ['#2a78d6', '#1e3a8a'], ['#10b981', '#065f46'], ['#6250d6', '#3b2a8f'], ['#eb6834', '#9a3412'], ['#e87ba4', '#9d174d']];
+  const ordinal = (n) => { const sfx = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (sfx[(v - 20) % 10] || sfx[v] || sfx[0]); };
+  const shortDay = (iso) => parseISO(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const cardUtilLevel = (u) => (u <= 0.3 ? 'good' : u <= 0.5 ? 'warning' : u <= 0.75 ? 'serious' : 'critical');
+
+  // Latest payment toward a card: imported or logged card payments, debt payments, or "Mark paid".
+  function cardLastPaid(card, transactions) {
+    let last = card.lastPaid || null;
+    for (const t of transactions) {
+      const hit = (card.id != null && t.debtId === card.id) || (t.accountType === 'credit' && t.type === 'transfer' && t.direction === 'in' && t.category === 'Card Payment' && sameName(t.accountName, card.name));
+      if (hit && (!last || t.date > last)) last = t.date;
+    }
+    return last;
+  }
+  // Cards with balance, utilization and due-date status (shared with reminders via RecurringScanner.cardDueStatus).
+  function useCards() {
+    const { data } = useApp();
+    return useMemo(() => data.debts.filter(isCardDebt).map((c) => {
+      const lastPaid = cardLastPaid(c, data.transactions);
+      const limit = Number(c.creditLimit) || 0;
+      return { ...c, lastPaid, limit, status: RecurringScanner.cardDueStatus({ ...c, lastPaid }, todayISO()), utilization: limit > 0 ? Math.max(0, Number(c.balance) || 0) / limit : null };
+    }), [data.debts, data.transactions]);
+  }
+  const URGENCY_ORDER = { overdue: 0, urgent: 1, soon: 2, ok: 3, unset: 4, paid: 5, clear: 6 };
+  const DUE_BADGE = {
+    overdue: { cls: 'bg-rose-600 text-white pulse-red', icon: 'CircleAlert' },
+    urgent: { cls: 'bg-rose-600 text-white pulse-red', icon: 'AlarmClock' },
+    soon: { cls: 'bg-amber-100 text-amber-900 dark:bg-amber-400/15 dark:text-amber-300', icon: 'Clock' },
+    ok: { cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300', icon: 'CalendarCheck' },
+    paid: { cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300', icon: 'CircleCheck' },
+    clear: { cls: 'bg-slate-900/[.06] text-slate-600 dark:bg-white/[.08] dark:text-slate-300', icon: 'CircleCheck' },
+    unset: { cls: 'bg-slate-900/[.06] text-slate-600 dark:bg-white/[.08] dark:text-slate-300', icon: 'CalendarPlus' },
+  };
+  function dueText(st) {
+    if (!st.set) return 'No due date';
+    if (st.level === 'clear') return 'Nothing owed';
+    if (st.paid) return 'Paid';
+    const d = st.daysLeft;
+    return d < 0 ? `${-d} day${d === -1 ? '' : 's'} overdue` : d === 0 ? 'Due today' : d === 1 ? 'Due tomorrow' : `Due in ${d} days`;
+  }
+  const DueBadge = ({ st }) => { const b = DUE_BADGE[st.level]; return <span data-level={st.level} className={cls('inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full whitespace-nowrap shrink-0', b.cls)}><Icon name={b.icon} size={12} strokeWidth={2.5} />{dueText(st)}</span>; };
+  const CardChip = ({ c, size = 'md' }) => {
+    const [a, b] = CARD_COLORS[(Number(c.color) || 0) % CARD_COLORS.length];
+    return (
+      <div className={cls('relative shrink-0 rounded-[8px] overflow-hidden text-white shadow-[0_6px_14px_-8px_rgba(14,27,44,.8)]', size === 'md' ? 'w-12 h-8' : 'w-10 h-7')} style={{ background: `linear-gradient(135deg, ${a}, ${b})` }} aria-hidden="true">
+        <span className="absolute left-1.5 top-1.5 w-2.5 h-2 rounded-[2px] bg-amber-200/80" />
+        <span className="num absolute right-1 bottom-0.5 text-[8px] font-bold tracking-wide opacity-90">{c.last4 || ''}</span>
+      </div>
+    );
+  };
+  const nextDueLabel = (st) => (st.paid ? `next ${shortDay(st.nextDue)}` : shortDay(st.currentDue));
+
+  // Dashboard: every card with balance, limit, utilization and its payment countdown, most urgent first.
+  function CardDueTracker() {
+    const { openCards } = useApp();
+    const cards = useCards();
+    const sorted = [...cards].sort((a, b) => URGENCY_ORDER[a.status.level] - URGENCY_ORDER[b.status.level] || (a.status.daysLeft ?? 99) - (b.status.daysLeft ?? 99));
+    return (
+      <>
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => openCards({})}>Manage</button>}>Credit card due dates</SectionTitle>
+        {cards.length === 0
+          ? <Card><Empty icon="CreditCard" title="No credit cards yet" body="Add a card to track its balance, limit and payment due date." action={<Button onClick={() => openCards({ edit: 'new' })}><Icon name="Plus" size={16} />Add a card</Button>} /></Card>
+          : <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06] rise-list" data-testid="card-tracker">{sorted.map((c) => <CardDueRow key={c.id} c={c} />)}</Card>}
+      </>
+    );
+  }
+  function CardDueRow({ c }) {
+    const { fmt, openCards, markCardPaid } = useApp();
+    const st = c.status, actionable = ['overdue', 'urgent', 'soon'].includes(st.level);
+    return (
+      <div className="p-3.5" data-card={c.name}>
+        <div className="flex items-start gap-3">
+          <button className="press flex-1 min-w-0 flex items-start gap-3 text-left" onClick={() => openCards({ edit: c.id })} aria-label={`Edit ${c.name}`}>
+            <CardChip c={c} />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold truncate leading-tight">{c.name}{c.last4 && <span className="num text-slate-400 font-medium"> ••{c.last4}</span>}</p>
+              <p className="num text-xs text-slate-500 mt-0.5"><span className="font-semibold text-slate-700 dark:text-slate-200">{fmt(c.balance)}</span>{c.limit ? ` of ${fmt(c.limit, true)}` : ' owed'}</p>
+            </div>
+          </button>
+          <DueBadge st={st} />
+        </div>
+        {c.limit > 0 && <div className="mt-2.5 flex items-center gap-2">
+          <div className="flex-1"><GrowBar value={c.utilization} color={STATUS[cardUtilLevel(c.utilization)].color} h="h-1.5" /></div>
+          <span className="num text-[11px] font-semibold text-slate-500 w-14 text-right">{Math.round(c.utilization * 100)}% used</span>
+        </div>}
+        <div className="flex items-center justify-between gap-2 mt-2 text-xs text-slate-500">
+          <span className="min-w-0 truncate">{st.set ? <>Due on the {ordinal(c.dueDay)} · <span className="font-semibold text-slate-700 dark:text-slate-200">{nextDueLabel(st)}</span></> : c.limit ? 'No payment due date yet' : 'Add a limit and due date'}</span>
+          {!st.set ? <button className="press shrink-0 font-semibold text-brand-700 dark:text-brand-400" onClick={() => openCards({ edit: c.id })}>Set due date</button>
+            : actionable && <button className="press shrink-0 font-semibold text-brand-700 dark:text-brand-400" onClick={() => markCardPaid(c)}>Mark paid</button>}
+        </div>
+      </div>
+    );
+  }
+
+  // Day-of-month picker: tap a day, change it any time.
+  function DueDayPicker({ value, onChange }) {
+    const next = value ? RecurringScanner.cardDueStatus({ dueDay: value, balance: 1, dueSince: todayISO() }).currentDue : null;
+    return (
+      <div>
+        <div className="grid grid-cols-7 gap-1.5" role="radiogroup" aria-label="Payment due day">
+          {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+            <button type="button" key={d} role="radio" aria-checked={value === d} aria-label={`Due on the ${ordinal(d)}`} onClick={() => onChange(d)}
+              className={cls('press num h-9 rounded-[10px] text-sm font-semibold transition-all duration-300 ease-in-out', value === d ? 'bg-gradient-to-b from-brand-500 to-brand-600 text-white shadow-[0_6px_14px_-6px_rgba(5,150,105,.7)] scale-105' : 'bg-slate-900/[.04] dark:bg-white/[.06] text-slate-700 dark:text-slate-200')}>{d}</button>
+          ))}
+          {value && <button type="button" onClick={() => onChange(null)} className="press col-span-4 h-9 rounded-[10px] text-xs font-semibold text-slate-500 border border-dashed border-slate-300 dark:border-slate-600">No due date</button>}
+        </div>
+        <p className="text-xs text-slate-500 mt-2" aria-live="polite">{value
+          ? <>Due on the <b className="text-slate-800 dark:text-slate-100">{ordinal(value)}</b> of every month · next {shortDay(next)}{value >= 29 ? '. In shorter months it falls on the last day.' : ''}</>
+          : 'Pick the day of the month your payment is due. You can change it any time.'}</p>
+      </div>
+    );
+  }
+
+  function CardForm({ card, onDone }) {
+    const { data, save, remove, toast, reload, go } = useApp();
+    const [f, setF] = useState(() => card
+      ? { name: card.name, last4: card.last4 || '', creditLimit: card.creditLimit ?? '', balance: String(card.balance ?? ''), apr: card.apr ? String(card.apr) : '', minPayment: card.minPayment ? String(card.minPayment) : '', dueDay: Number(card.dueDay) || null, reminders: card.reminders !== false, remindDays: card.remindDays ?? '', color: Number(card.color) || 0 }
+      : { name: '', last4: '', creditLimit: '', balance: '', apr: '', minPayment: '', dueDay: null, reminders: true, remindDays: '', color: data.debts.filter(isCardDebt).length % CARD_COLORS.length });
+    const [confirmDel, setConfirmDel] = useState(false);
+    const set = (k) => (e) => setF({ ...f, [k]: e && e.target ? e.target.value : e });
+    const orig = card ? data.debts.find((d) => d.id === card.id) : null;
+    const st = card ? card.status : null;
+
+    const submit = async (e) => {
+      e.preventDefault();
+      const name = f.name.trim();
+      if (!name) return toast('Give the card a name', 'error');
+      if (f.last4 && !/^\d{4}$/.test(f.last4)) return toast('Last 4 digits must be exactly 4 numbers', 'error');
+      if (data.debts.some((d) => d.id !== orig?.id && isCardDebt(d) && sameName(d.name, name))) return toast('You already have a card with this name', 'error');
+      const bal = round2(parseAmount(f.balance) || 0);
+      const balChanged = !orig || Math.abs(bal - Number(orig.balance)) > 0.004;
+      const dueDay = f.dueDay ? Number(f.dueDay) : null;
+      const limit = f.creditLimit === '' || f.creditLimit == null ? null : round2(parseAmount(f.creditLimit) || 0) || null;
+      await save('debts', {
+        ...(orig || { type: 'Credit Card', kind: 'credit' }), name, last4: f.last4 || '', creditLimit: limit, balance: bal, apr: Number(f.apr) || 0,
+        minPayment: round2(parseAmount(f.minPayment) || 0), dueDay, reminders: !!f.reminders, remindDays: f.remindDays === '' ? null : Number(f.remindDays), color: f.color,
+        ...((orig ? Number(orig.dueDay) || null : null) !== dueDay ? { dueSince: todayISO() } : {}),
+        ...(orig && orig.ledger && balChanged ? { anchorBalance: bal, anchorDate: todayISO(), anchorSetAt: new Date().toISOString(), balanceSource: 'manual' } : {}),
+      });
+      // Renamed: keep its imported transactions attached to it.
+      if (orig && !sameName(orig.name, name)) {
+        const moved = data.transactions.filter((t) => t.accountType === 'credit' && sameName(t.accountName, orig.name)).map((t) => ({ ...t, accountName: name }));
+        if (moved.length) { await DB.bulkPut('transactions', moved); await reload('transactions'); }
+      }
+      toast(orig ? 'Card saved' : 'Card added'); onDone();
+    };
+
+    return (
+      <form className="space-y-4" onSubmit={submit}>
+        <div className="flex items-center gap-3">
+          <CardChip c={{ ...f, last4: f.last4 }} />
+          <div className="flex gap-1.5">{CARD_COLORS.map(([a, b], i) => <button type="button" key={i} aria-label={`Card color ${i + 1}`} onClick={() => setF({ ...f, color: i })} className={cls('press w-7 h-7 rounded-full ring-offset-2 ring-offset-[var(--sheet)]', f.color === i && 'ring-2 ring-brand-500')} style={{ background: `linear-gradient(135deg, ${a}, ${b})` }} />)}</div>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="col-span-2"><Field label="Card name"><Input value={f.name} onChange={set('name')} placeholder="e.g. Amex Gold" /></Field></div>
+          <Field label="Last 4 digits"><Input inputMode="numeric" autoComplete="off" placeholder="1234" value={f.last4} onChange={(e) => setF({ ...f, last4: e.target.value.replace(/\D/g, '').slice(0, 4) })} /></Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Credit limit"><Input inputMode="decimal" placeholder="e.g. 8,000" value={f.creditLimit} onChange={set('creditLimit')} /></Field>
+          <Field label="Current balance"><Input inputMode="decimal" placeholder="0.00" value={f.balance} onChange={set('balance')} /></Field>
+          <Field label="APR %"><Input inputMode="decimal" placeholder="e.g. 24.99" value={f.apr} onChange={set('apr')} /></Field>
+          <Field label="Minimum payment"><Input inputMode="decimal" placeholder="0.00" value={f.minPayment} onChange={set('minPayment')} /></Field>
+        </div>
+        {orig?.ledger && <p className="text-xs text-slate-500 -mt-2">This card's balance updates from imported statements. Changing it here sets a new starting balance from today.</p>}
+
+        <div>
+          <span className="block text-[13px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5">Payment due date</span>
+          <DueDayPicker value={f.dueDay} onChange={(d) => setF({ ...f, dueDay: d })} />
+        </div>
+
+        <div className="rounded-[16px] bg-slate-900/[.04] dark:bg-white/[.05] p-3 space-y-3">
+          <label className="flex items-center justify-between gap-3">
+            <span><span className="block text-sm font-semibold">Payment reminders</span><span className="block text-xs text-slate-500">Before the due date, on the day, and if it's overdue.</span></span>
+            <button type="button" role="switch" aria-checked={!!f.reminders} aria-label="Payment reminders" onClick={() => setF({ ...f, reminders: !f.reminders })} className={cls('press w-12 h-7 rounded-full p-0.5 transition-colors duration-300 shrink-0', f.reminders ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-700')}>
+              <span className={cls('block w-6 h-6 rounded-full bg-white shadow transition-transform duration-300', f.reminders && 'translate-x-5')} />
+            </button>
+          </label>
+          {f.reminders && <Field label="First reminder"><Select value={f.remindDays} onChange={set('remindDays')} options={[{ value: '', label: `App setting (${data.settings.reminderDays ?? 3} days before)` }, { value: 0, label: 'Only on the due date' }, ...[1, 2, 3, 5, 7, 10].map((d) => ({ value: d, label: `${d} day${d > 1 ? 's' : ''} before` }))]} /></Field>}
+          {f.reminders && !data.settings.notify && <p className="text-xs text-amber-700 dark:text-amber-300 flex gap-1.5"><Icon name="BellOff" size={14} className="shrink-0 mt-px" /><span>Notifications are off. <button type="button" className="press font-semibold underline" onClick={() => { onDone(); go('settings'); }}>Turn them on in Settings</button>.</span></p>}
+        </div>
+
+        {st && st.set && card.lastPaid && orig?.lastPaid === card.lastPaid && st.paid && (
+          <p className="text-xs text-slate-500 flex items-center justify-between">Marked paid on {prettyDate(card.lastPaid)}
+            <button type="button" className="press font-semibold text-brand-700 dark:text-brand-400" onClick={async () => { await save('debts', { ...orig, lastPaid: null }); toast('Paid mark removed'); }}>Undo</button></p>
+        )}
+
+        <Button type="submit" className="w-full">{orig ? 'Save card' : 'Add card'}</Button>
+        {orig && <Button type="button" variant="ghost" className="w-full !text-rose-600" onClick={async () => { if (!confirmDel) return setConfirmDel(true); await remove('debts', orig.id); toast(`${orig.name} deleted`); onDone(); }}>
+          <Icon name="Trash2" size={16} />{confirmDel ? 'Tap again to delete this card' : 'Delete card'}</Button>}
+        {confirmDel && <p className="text-xs text-slate-500 text-center -mt-2">Its transactions stay in your history.</p>}
+      </form>
+    );
+  }
+
+  // "Manage credit cards": list -> add / edit. state: {} (list) | { edit: id | 'new', fromList }
+  function ManageCardsSheet({ state, setState }) {
+    const { fmt } = useApp();
+    const cards = useCards();
+    const editing = state && state.edit && state.edit !== 'new' ? cards.find((c) => c.id === state.edit) : null;
+    const title = !state ? 'Credit cards' : state.edit === 'new' ? 'Add credit card' : editing ? `Edit ${editing.name}` : 'Manage credit cards';
+    const close = () => setState(null);
+    const back = () => (state && state.fromList ? setState({}) : close());
+    return (
+      <Sheet open={!!state} title={title} onClose={close}>
+        {state && (state.edit ? (
+          <div key={state.edit} className="fade-in">
+            {state.fromList && <button type="button" onClick={() => setState({})} className="press -mt-1 mb-3 inline-flex items-center gap-1 text-sm font-semibold text-brand-700 dark:text-brand-400"><Icon name="ChevronLeft" size={16} />All cards</button>}
+            <CardForm card={editing} onDone={back} />
+          </div>
+        ) : (
+          <div className="fade-in">
+            {cards.length === 0 ? <Empty icon="CreditCard" title="No cards yet" body="Add a card to track its limit and when the payment is due." /> :
+              <div className="card divide-y divide-slate-900/[.05] dark:divide-white/[.06] rise-list">
+                {cards.map((c) => (
+                  <button key={c.id} type="button" onClick={() => setState({ edit: c.id, fromList: true })} className="press w-full flex items-center gap-3 p-3.5 text-left">
+                    <CardChip c={c} />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold truncate">{c.name}{c.last4 && <span className="num text-slate-400 font-medium"> ••{c.last4}</span>}</p>
+                      <p className="num text-xs text-slate-500">{c.dueDay ? `Due on the ${ordinal(c.dueDay)}` : 'No due date'}{c.limit ? ` · limit ${fmt(c.limit, true)}` : ''}</p>
+                    </div>
+                    <Icon name="ChevronRight" size={18} className="text-slate-400" />
+                  </button>
+                ))}
+              </div>}
+            <Button className="w-full mt-4" onClick={() => setState({ edit: 'new', fromList: true })}><Icon name="Plus" size={16} />Add a card</Button>
+            <p className="text-xs text-slate-500 mt-3 flex gap-1.5"><Icon name="ShieldCheck" size={14} className="shrink-0 mt-px text-emerald-600" />Saved only on this device. Store just the last 4 digits; never enter a full card number.</p>
+          </div>
+        ))}
+      </Sheet>
+    );
+  }
+
   /* ===================================================== SAVINGS FUNDS */
   const GOAL_ICONS = ['PiggyBank', 'Plane', 'TrendingUp', 'House', 'Car', 'GraduationCap', 'Gift', 'Heart'];
   const FUND_COLORS = ['#10b981', '#2a78d6', '#eb6834', '#6250d6', '#e87ba4', '#eda100'];
@@ -2434,7 +2679,7 @@
   };
 
   function SettingsView() {
-    const { data, setSetting, reload, toast, loadSample, installPrompt, install } = useApp();
+    const { data, setSetting, reload, toast, loadSample, installPrompt, install, openCards } = useApp();
     const st = data.settings;
     const [storage, setStorage] = useState(null);
     useEffect(() => {
@@ -2503,6 +2748,7 @@
             </button>
           </Row>
           {st.notify && <Row icon="BellRing" label="Send a test reminder" onClick={async () => { const ok = await RecurringScanner.notifications.test(); toast(ok ? 'Test sent' : 'Could not show a notification', ok ? 'ok' : 'error'); }}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>}
+          <Row icon="CreditCard" label="Manage credit cards" sub="Names, last 4 digits, limits and payment due dates" onClick={() => openCards({})}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
           <Row icon="CalendarClock" label="Remind me">
             <select className={smallSelect} value={st.reminderDays ?? 3} onChange={(e) => setSetting('reminderDays', Number(e.target.value))}>
               {[1, 2, 3, 5, 7].map((d) => <option key={d} value={d}>{d} day{d > 1 ? 's' : ''} before</option>)}
@@ -2559,7 +2805,7 @@
         { name: 'Retirement', type: 'Retirement', balance: 28400 },
       ],
       debts: [
-        { name: 'Visa Card', type: 'Credit Card', kind: 'credit', balance: 3840, apr: 24.99, minPayment: 95, ledger: true, anchorBalance: 3840, anchorDate: today, anchorSetAt: '2000-01-02T00:00:00.000Z', balanceSource: 'manual' },
+        { name: 'Visa Card', type: 'Credit Card', kind: 'credit', last4: '4821', creditLimit: 8000, dueDay: 28, dueSince: '2000-01-01', reminders: true, color: 1, balance: 3840, apr: 24.99, minPayment: 95, ledger: true, anchorBalance: 3840, anchorDate: today, anchorSetAt: '2000-01-02T00:00:00.000Z', balanceSource: 'manual' },
         { name: 'Auto loan', type: 'Auto Loan', balance: 11200, apr: 6.4, minPayment: 310 },
         { name: 'Student loan', type: 'Student Loan', balance: 18750, apr: 4.99, minPayment: 210 },
       ],
@@ -2592,6 +2838,7 @@
     const [toastState, setToastState] = useState(null);
     const [installPrompt, setInstallPrompt] = useState(null);
     const [online, setOnline] = useState(navigator.onLine);
+    const [cardsUI, setCardsUI] = useState(null); // Manage credit cards sheet
     const toastTimer = useRef();
 
     const toast = useCallback((msg, kind = 'ok') => { setToastState({ msg, kind }); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToastState(null), 2400); }, []);
@@ -2644,11 +2891,12 @@
     // Reminders: rebuild the schedule, show anything due, arm timers; again whenever the app returns to the foreground.
     useEffect(() => {
       if (!ready || !recurring) return;
-      const run = () => RecurringScanner.notifications.sync({ items: recurring.items, bills: data.bills, leadDays: data.settings.reminderDays ?? 3, enabled: !!data.settings.notify }).catch((e) => console.warn('Reminder sync failed', e));
+      const cards = data.debts.filter(isCardDebt).map((c) => ({ ...c, lastPaid: cardLastPaid(c, data.transactions) }));
+      const run = () => RecurringScanner.notifications.sync({ items: recurring.items, bills: data.bills, cards, leadDays: data.settings.reminderDays ?? 3, enabled: !!data.settings.notify }).catch((e) => console.warn('Reminder sync failed', e));
       run();
       const vis = () => document.visibilityState === 'visible' && run();
       document.addEventListener('visibilitychange', vis); return () => document.removeEventListener('visibilitychange', vis);
-    }, [ready, recurring, data.settings.notify, data.settings.reminderDays]);
+    }, [ready, recurring, data.debts, data.transactions, data.settings.notify, data.settings.reminderDays]);
 
     const currency = data.settings.currency || 'USD';
     const fmt = useMemo(() => {
@@ -2672,7 +2920,12 @@
       } catch (e) { toast(e.message, 'error'); }
     }, [store, toast]);
 
-    const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install, recurring, recurringAction };
+    const markCardPaid = useCallback(async (c) => {
+      const orig = data.debts.find((d) => d.id === c.id); if (!orig) return;
+      await store.save('debts', { ...orig, lastPaid: todayISO() });
+      toast(`${c.name} marked as paid`);
+    }, [data.debts, store, toast]);
+    const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install, recurring, recurringAction, openCards: setCardsUI, markCardPaid };
 
     if (!ready) return <SkeletonScreen />;
     if (error) return <div className="p-6"><Card className="p-4"><p className="font-semibold text-rose-600">Storage unavailable</p><p className="text-sm text-slate-500 mt-1">{error}. Private-browsing modes in some browsers block IndexedDB.</p></Card></div>;
@@ -2710,6 +2963,7 @@
             </div>
           </nav>
           {(tab === 'dashboard' || tab === 'transactions') && <QuickLogFab />}
+          <ManageCardsSheet state={cardsUI} setState={setCardsUI} />
           <Toast toast={toastState} />
         </div>
       </AppCtx.Provider>

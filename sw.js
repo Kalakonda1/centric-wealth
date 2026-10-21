@@ -1,5 +1,5 @@
 /* Centric Wealth service worker — offline-first caching. Bump VERSION on every deploy. */
-const VERSION = 'v1.9.0';
+const VERSION = 'v1.10.0';
 const CACHE = `centric-wealth-${VERSION}`;
 
 const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js', './recurring-scanner.js', './advisor-engine.js', './monthly-report.js', './analytics-engine.js', './fonts/manrope-latin-var.woff2'];

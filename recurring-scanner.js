@@ -9,7 +9,7 @@
  *   await RecurringScanner.keep(item);          // tracks it as a bill (monthly/yearly) + remembers the choice
  *   await RecurringScanner.cancel(item);        // remembers it; later charges get flagged
  *   await RecurringScanner.notifications.requestPermission();   // call from a tap/click
- *   await RecurringScanner.notifications.sync({ items, bills, leadDays: 3 });
+ *   await RecurringScanner.notifications.sync({ items, bills, cards, leadDays: 3 });   // cards: credit cards with dueDay
  *
  * Storage: the app's IndexedDB ("centric-wealth"). Decisions, the reminder schedule and the
  * notification log live in the existing `settings` store, so no schema migration is needed.
@@ -125,6 +125,30 @@
     if (ref > prev) return bill.lastPaid ? out(next, true) : out(next, false);
     if (ref > prev2) return out(next, false);
     return out(prev, false);
+  }
+
+  /**
+   * Payment status of a credit card with a due day of the month (1-31; 29-31 fall on the last day in shorter months).
+   * card: { dueDay, balance, lastPaid (latest payment date), dueSince (when the due date was set) }
+   * A payment made after the previous due date counts toward the next one.
+   * level: 'unset' | 'clear' (nothing owed) | 'paid' | 'ok' (> 7 days) | 'soon' (<= 7) | 'urgent' (<= 3) | 'overdue'
+   */
+  function cardDueStatus(card, today) {
+    today = today || todayISO();
+    const dueDay = Number(card && card.dueDay);
+    if (!(dueDay >= 1 && dueDay <= 31)) return { set: false, level: 'unset' };
+    const since = String((card.dueSince || card.createdAt || today)).slice(0, 10);
+    const paidAfterSetup = card.lastPaid && card.lastPaid >= since;
+    const st = billStatus({ dueDay, frequency: 'monthly', lastPaid: paidAfterSetup ? card.lastPaid : null, createdAt: paidAfterSetup ? null : since }, today);
+    const owed = Number(card.balance) || 0;
+    let level;
+    if (owed <= 0.004) level = 'clear';
+    else if (st.paid) level = 'paid';
+    else if (st.daysLeft < 0) level = 'overdue';
+    else if (st.daysLeft <= 3) level = 'urgent';
+    else if (st.daysLeft <= 7) level = 'soon';
+    else level = 'ok';
+    return Object.assign({ set: true, level, owed }, st);
   }
 
   /* ========================================================= analysis */
@@ -492,7 +516,7 @@
      * Build the reminder list from bills (due-date fields) and detected recurring charges.
      * Includes the next two cycles so background delivery still works if the app isn't opened for a while.
      */
-    buildSchedule({ items = [], bills = [], leadDays = 3, today } = {}) {
+    buildSchedule({ items = [], bills = [], cards = [], leadDays = 3, today } = {}) {
       today = today || todayISO();
       const out = [];
       const at9 = (iso) => { const d = parseISO(iso); d.setHours(9, 0, 0, 0); return d.toISOString(); };
@@ -520,6 +544,23 @@
         add(it.key.replace(/\W+/g, '_'), it.merchant, it.lastAmount, it.nextDue, it.kind);
         add(it.key.replace(/\W+/g, '_'), it.merchant, it.lastAmount, nextOccurrence(it.nextDue, cad, it.dueDay), it.kind);
       }
+      // Credit cards with a custom due day: a heads-up N days before, a "due today" alert, and an overdue alert.
+      for (const c of cards) {
+        if (c.reminders === false) continue;
+        const st = cardDueStatus(c, today);
+        if (!st.set || st.level === 'clear') continue;
+        const lead = c.remindDays != null && c.remindDays !== '' ? Number(c.remindDays) : leadDays;
+        const label = c.name + (c.last4 ? ' (...' + c.last4 + ')' : '');
+        const amt = Number(c.minPayment) > 0 ? 'minimum ' + money(c.minPayment) + ', balance ' + money(st.owed) : 'balance ' + money(st.owed);
+        const id = 'card-' + String(c.id || c.name).replace(/\W+/g, '_');
+        const heads = (due) => { if (lead > 0) out.push({ tag: id + '-' + due + '-lead', kind: 'card', dueDate: due, notifyAt: at9(addDays(due, -lead)), title: 'Credit card payment due', body: label + ' payment is due ' + fmtDay(due) + ' (' + amt + ').', url: './#dashboard' }); };
+        if (!st.paid) {
+          heads(st.currentDue);
+          out.push({ tag: id + '-' + st.currentDue + '-day', kind: 'card', dueDate: st.currentDue, notifyAt: at9(st.currentDue), title: 'Card payment due today', body: label + ': pay today to avoid a late fee (' + amt + ').', url: './#dashboard', urgent: true });
+          if (st.daysLeft < 0) out.push({ tag: id + '-' + st.currentDue + '-late', kind: 'card', dueDate: today, notifyAt: new Date().toISOString(), title: 'Card payment overdue', body: label + ' was due ' + fmtDay(st.currentDue) + '. Pay as soon as you can (' + amt + ').', url: './#dashboard', urgent: true });
+        }
+        heads(st.paid ? st.nextDue : st.followingDue);
+      }
       for (const it of items) {
         const f = it.flags.find((x) => x.code === 'charged_after_cancel');
         if (f) out.push({ tag: 'cancelled-' + it.key.replace(/\W+/g, '_') + '-' + f.date, kind: 'alert', dueDate: f.date, notifyAt: new Date().toISOString(), title: 'Charged after cancelling', body: it.merchant + ': ' + f.message, url: './#dashboard', urgent: true });
@@ -528,10 +569,10 @@
     },
 
     /** Save the schedule (for the service worker), show anything due now, and arm timers. */
-    async sync({ items = [], bills = [], leadDays = 3, enabled } = {}) {
+    async sync({ items = [], bills = [], cards = [], leadDays = 3, enabled } = {}) {
       timers.forEach(clearTimeout); timers = [];
       if (enabled === undefined) enabled = await store.getSetting(KEYS.notify, false);
-      const schedule = notifications.buildSchedule({ items, bills, leadDays });
+      const schedule = notifications.buildSchedule({ items, bills, cards, leadDays });
       await store.setSetting(KEYS.schedule, { updatedAt: new Date().toISOString(), leadDays, items: schedule });
       if (!enabled || !('Notification' in global) || Notification.permission !== 'granted') return { scheduled: schedule.length, delivered: 0, mode: 'off' };
 
@@ -591,7 +632,7 @@
   global.RecurringScanner = {
     version: '1.0.0',
     analyze, scan, keep, cancel, undo, reconcile,
-    merchantKey, billStatus,
+    merchantKey, billStatus, cardDueStatus,
     notifications,
     SETTINGS_KEYS: KEYS, SYNC_TAG,
   };

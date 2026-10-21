@@ -181,6 +181,17 @@ Credit limits come from card statements ("Credit Limit"), or you can enter them 
 - **PDF chart summary:** the PDF also gets a **Chart Summary** page, with the charts drawn on the device as images.
 
 
+## Credit cards & payment due dates
+
+- **Manage credit cards** (Dashboard › Credit card due dates › Manage, Settings, or Budget & Debt › Debt): add, edit or delete cards with a name, last 4 digits, credit limit, balance, APR, minimum payment, color and a **payment due day** (tap a day 1-31 on the picker; 29-31 fall on the last day in shorter months). Change it any time. Only the last 4 digits are stored, never a full number.
+- **Dashboard tracker:** each card shows its balance, limit, utilization bar and due date, most urgent first. Badges always pair color with an icon and text:
+  - green: due in more than 7 days, or paid for this cycle;
+  - yellow: due within 7 days;
+  - pulsing red: due within 3 days, today, or overdue.
+- **Paid detection:** a card counts as paid for the cycle when a payment lands after the previous due date (an imported "Card Payment", a payment logged in the Debt tab, or the **Mark paid** button, which only stops reminders and doesn't change the balance; undo it from the card's edit screen). Cards with no balance show "Nothing owed".
+- **Reminders:** with notifications on in Settings, each card gets a heads-up before the due date (the app setting, or a per-card choice), an alert on the due date, and an overdue alert. These are added to the same schedule the service worker uses for background reminders. Turn reminders off per card in its edit screen.
+- **Storage:** card settings live on the card's record in the IndexedDB `debts` store (`last4`, `creditLimit`, `dueDay`, `dueSince`, `lastPaid`, `reminders`, `remindDays`, `color`). The due-date logic is `RecurringScanner.cardDueStatus(card, today)`.
+
 ## Look & feel
 
 - **Theme:** cool mist light mode and deep navy dark mode, built from CSS variables (`--canvas`, `--card`, `--glass`…) at the top of `index.html`. Cards are soft translucent panels with navy-tinted shadows; real frosted glass (backdrop blur) is used only where content scrolls underneath (the floating nav dock, bottom sheets and toasts), which keeps scrolling smooth on phones.
