@@ -190,6 +190,8 @@
 
   <!-- Recurring subscriptions/bills detection + local reminders (see recurring-scanner.js) -->
   <script src="./recurring-scanner.js"></script>
+  <!-- Financial health score, 50/30/20 and debt payoff maths (see advisor-engine.js) -->
+  <script src="./advisor-engine.js"></script>
 
   <!-- =====================================================================
        React app (JSX compiled in-browser by Babel Standalone)
@@ -272,22 +274,10 @@
 
   /* ------------------------------------------------------------ debt payoff */
   // Simulates payoff month by month. strategy: 'avalanche' (highest APR first) | 'snowball' (smallest balance first)
+  // Shared with the Advisor tab (advisor-engine.js) so both screens give identical numbers.
   function simulatePayoff(debts, extra = 0, strategy = 'avalanche') {
-    let list = debts.filter((d) => d.balance > 0).map((d) => ({ ...d, bal: Number(d.balance), apr: Number(d.apr) || 0, min: Math.max(Number(d.minPayment) || 0, 1) }));
-    if (!list.length) return { months: 0, interest: 0, order: [], feasible: true };
-    const budget = list.reduce((s, d) => s + d.min, 0) + Math.max(0, Number(extra) || 0);
-    let months = 0, interest = 0; const order = [];
-    while (list.some((d) => d.bal > 0.005) && months < 600) {
-      months++;
-      list.forEach((d) => { if (d.bal > 0) { const i = d.bal * d.apr / 100 / 12; d.bal += i; interest += i; } });
-      const active = list.filter((d) => d.bal > 0.005);
-      active.sort(strategy === 'snowball' ? (a, b) => a.bal - b.bal : (a, b) => b.apr - a.apr || a.bal - b.bal);
-      let pool = budget;
-      active.forEach((d) => { const p = Math.min(d.min, d.bal, pool); d.bal -= p; pool -= p; });
-      for (const d of active) { if (pool <= 0) break; const p = Math.min(d.bal, pool); d.bal -= p; pool -= p; }
-      active.forEach((d) => { if (d.bal <= 0.005 && !order.find((o) => o.id === d.id)) { d.bal = 0; order.push({ id: d.id, name: d.name, month: months }); } });
-    }
-    return { months, interest: round2(interest), order, feasible: months < 600 };
+    const r = AdvisorEngine.payoff(debts, extra, strategy);
+    return { months: r.months || 0, interest: r.totalInterest, feasible: r.feasible, order: r.order.filter((o) => o.paidOffMonth).map((o) => ({ id: o.id, name: o.name, month: o.paidOffMonth })) };
   }
 
   /* -------------------------------------------------------------- CSV parse */
@@ -1194,6 +1184,210 @@
     );
   }
 
+  /* ====================================================== ADVISOR */
+  const GRADE_TONE = (g) => !g ? 'text-slate-400' : g.startsWith('A') ? 'text-emerald-600 dark:text-emerald-400' : g.startsWith('B') ? 'text-lime-600 dark:text-lime-400' : g.startsWith('C') ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400';
+  const STATUS_BAR = { good: 'bg-emerald-500', ok: 'bg-amber-500', bad: 'bg-rose-500' };
+  const fmtPct = (v, d = 0) => (v == null || !isFinite(v) ? '-' : `${(v * 100).toFixed(d)}%`);
+  const monthsText = (m) => (m == null ? 'never' : m < 12 ? `${m} mo` : `${Math.floor(m / 12)} yr${m >= 24 ? 's' : ''}${m % 12 ? ` ${m % 12} mo` : ''}`);
+
+  function Bar({ value, className = 'bg-brand-500', track = 'bg-slate-100 dark:bg-slate-800', h = 'h-2' }) {
+    return <div className={cls(h, 'rounded-full overflow-hidden', track)}><div className={cls('h-full rounded-full transition-all', className)} style={{ width: `${clamp01(value) * 100}%` }} /></div>;
+  }
+  const clamp01 = (v) => Math.min(1, Math.max(0, Number(v) || 0));
+
+  function GradeRing({ grade, score }) {
+    const r = 42, c = 2 * Math.PI * r, v = clamp01((score || 0) / 100);
+    return (
+      <div className="relative w-28 h-28 shrink-0">
+        <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90" aria-hidden="true">
+          <circle cx="50" cy="50" r={r} fill="none" strokeWidth="9" className="stroke-slate-100 dark:stroke-slate-800" />
+          <circle cx="50" cy="50" r={r} fill="none" strokeWidth="9" strokeLinecap="round" stroke="currentColor" className={GRADE_TONE(grade)} strokeDasharray={c} strokeDashoffset={c * (1 - v)} style={{ transition: 'stroke-dashoffset .6s ease' }} />
+        </svg>
+        <div className="absolute inset-0 grid place-items-center text-center">
+          <div><p className={cls('text-3xl font-extrabold leading-none', GRADE_TONE(grade))}>{grade || '–'}</p>{score != null && <p className="num text-xs text-slate-500 mt-1">{score}/100</p>}</div>
+        </div>
+      </div>
+    );
+  }
+
+  function AdvisorView() {
+    const { data, fmt, go } = useApp();
+    const [extra, setExtra] = useState(() => String(data.settings.debtExtra ?? 100));
+    const extraNum = Math.max(0, parseAmount(extra) || 0);
+    const report = useMemo(() => AdvisorEngine.analyze(
+      { transactions: data.transactions, bills: data.bills, debts: data.debts, accounts: data.accounts, budgets: data.budgets },
+      { extra: extraNum }), [data.transactions, data.bills, data.debts, data.accounts, data.budgets, extraNum]);
+    const { metrics: m, health: h, budget503020: plan, debt: d, recommendations: recs } = report;
+    const [strategy, setStrategy] = useState(null);
+    const shown = strategy || d.recommended || 'avalanche';
+    const plan2 = d[shown];
+    const periodLabel = m.period.months.length
+      ? `${m.period.months.length === 1 ? monthLabel(m.period.months[0]) : `${monthLabel(m.period.months[0], { month: 'short' })} – ${monthLabel(m.period.months[m.period.months.length - 1], { month: 'short', year: 'numeric' })}`}${m.period.partial ? ' (month to date)' : ` · ${m.period.months.length}-month average`}`
+      : 'No data yet';
+
+    return (
+      <div>
+        <header className="pt-2">
+          <h1 className="text-2xl font-bold tracking-tight">Budget & Health Advisor</h1>
+          <p className="text-sm text-slate-500 mt-0.5">{periodLabel}</p>
+        </header>
+
+        {/* ---- Health score ---- */}
+        <Card className="mt-4 p-4">
+          <div className="flex items-center gap-4">
+            <GradeRing grade={h.grade} score={h.score} />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Financial health</p>
+              <p className="font-semibold mt-1 leading-snug">{h.summary}</p>
+              {h.caps && h.caps.map((c) => <p key={c} className="text-xs text-rose-600 dark:text-rose-400 mt-1">{c}</p>)}
+            </div>
+          </div>
+          {!h.grade ? (
+            <div className="mt-4 flex gap-2"><Button className="flex-1" onClick={() => go('upload')}><Icon name="Upload" size={16} />Import statements</Button><Button variant="secondary" className="flex-1" onClick={() => go('transactions')}>Add manually</Button></div>
+          ) : (
+            <div className="mt-4 space-y-3.5">
+              {h.factors.map((f) => (
+                <div key={f.id}>
+                  <div className="flex items-baseline justify-between text-sm mb-1.5">
+                    <span className="font-medium">{f.label}</span>
+                    <span className="num text-slate-500"><span className="font-semibold text-slate-800 dark:text-slate-100">{typeof f.value === 'number' ? fmt(f.value) : f.value}</span> · {f.points}/{f.max}</span>
+                  </div>
+                  <Bar value={f.ratio} className={STATUS_BAR[f.status]} />
+                  <p className="text-xs text-slate-500 mt-1">Target: {f.target}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* ---- Monthly picture ---- */}
+        {m.hasData && <>
+          <SectionTitle>Your average month</SectionTitle>
+          <Card className="p-4">
+            <div className="grid grid-cols-2 gap-3">
+              {[['Income', m.income, 'text-emerald-600 dark:text-emerald-400'], ['Left over', m.leftOver, m.leftOver >= 0 ? '' : 'text-rose-600'], ['Fixed expenses', m.fixedExpenses, ''], ['Variable expenses', m.variableExpenses, '']].map(([l, v, c]) => (
+                <div key={l} className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3"><p className="text-xs text-slate-500">{l}</p><p className={cls('num text-lg font-bold', c)}>{fmt(v)}</p></div>
+              ))}
+            </div>
+            {m.income > 0 && (() => {
+              const fx = m.fixedExpenses / m.income, vr = m.variableExpenses / m.income, sv = Math.max(0, m.leftOver) / m.income;
+              return (<>
+                <div className="mt-4 h-3 rounded-full overflow-hidden flex bg-slate-100 dark:bg-slate-800">
+                  <div className="bg-sky-500" style={{ width: `${clamp01(fx) * 100}%` }} />
+                  <div className="bg-amber-400" style={{ width: `${clamp01(Math.min(vr, 1 - clamp01(fx))) * 100}%` }} />
+                  <div className="bg-emerald-500" style={{ width: `${clamp01(sv) * 100}%` }} />
+                </div>
+                <div className="flex justify-between text-xs text-slate-500 mt-2">
+                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-sky-500 inline-block" />Fixed {fmtPct(fx)}</span>
+                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-amber-400 inline-block" />Variable {fmtPct(vr)}</span>
+                  <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Saved {fmtPct(m.savingsRate)}</span>
+                </div>
+              </>);
+            })()}
+          </Card>
+        </>}
+
+        {/* ---- 50/30/20 ---- */}
+        {m.income > 0 && <>
+          <SectionTitle>50/30/20 budget</SectionTitle>
+          <Card className="p-4">
+            <p className="text-sm text-slate-500">Based on {fmt(plan.income)} monthly take-home pay.</p>
+            <div className="mt-3 space-y-4">
+              {plan.rows.map((r) => {
+                const isSave = r.key === 'savings';
+                const good = isSave ? r.actual >= r.target : r.actual <= r.target;
+                return (
+                  <div key={r.key}>
+                    <div className="flex items-baseline justify-between">
+                      <p className="font-semibold">{r.label} <span className="text-xs font-medium text-slate-500">{Math.round(r.targetShare * 100)}%</span></p>
+                      <p className="num text-sm"><span className={cls('font-semibold', good ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>{fmt(r.actual)}</span><span className="text-slate-500"> / {fmt(r.target)}</span></p>
+                    </div>
+                    <div className="mt-1.5 relative">
+                      <Bar value={r.target > 0 ? Math.max(0, r.actual) / (r.target * (isSave ? 1 : 1.5)) : 0} h="h-2.5" className={good ? 'bg-emerald-500' : isSave ? 'bg-amber-500' : 'bg-rose-500'} />
+                      {!isSave && <span className="absolute top-[-3px] h-[16px] w-0.5 bg-slate-400 dark:bg-slate-500 rounded" style={{ left: `${100 / 1.5}%` }} title="Target" />}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">{fmtPct(r.actualShare)} of income · {isSave ? (good ? `${fmt(r.actual - r.target)} above target` : `${fmt(r.target - r.actual)} short`) : (good ? `${fmt(r.difference)} under target` : `${fmt(-r.difference)} over target`)}</p>
+                  </div>
+                );
+              })}
+            </div>
+            {plan.suggestion && <p className="mt-4 text-sm rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3 flex gap-2"><Icon name="Lightbulb" size={16} className="text-amber-500 shrink-0 mt-0.5" /><span>{plan.suggestion.replace(/(\d+\.\d{2})/, (n) => fmt(Number(n)))}</span></p>}
+            {plan.topWants.length > 0 && <p className="text-xs text-slate-500 mt-2">Biggest wants: {plan.topWants.map((w) => `${w.category} ${fmt(w.amount)}`).join(' · ')}</p>}
+          </Card>
+        </>}
+
+        {/* ---- Debt paydown ---- */}
+        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Edit debts</button>}>Debt paydown</SectionTitle>
+        {data.debts.filter((x) => x.balance > 0).length === 0 ? (
+          <Card><Empty icon="CreditCard" title="No debts tracked" body="Add your cards and loans to compare payoff plans." action={<Button variant="secondary" onClick={() => go('budget', 'debt')}>Add a debt</Button>} /></Card>
+        ) : (
+          <Card className="p-4">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              {[['Total debt', fmt(m.debt.total, true)], ['Avg APR', `${m.debt.weightedApr.toFixed(1)}%`], ['Debt-to-income', fmtPct(m.debt.dti)]].map(([l, v]) => (
+                <div key={l} className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2.5 px-1"><p className="text-[11px] text-slate-500">{l}</p><p className="num font-bold">{v}</p></div>
+              ))}
+            </div>
+            <p className="num text-xs text-slate-500 mt-2">{fmt(m.debt.minPayments)}/mo minimums · about {fmt(m.debt.monthlyInterest)}/mo goes to interest right now</p>
+
+            <div className="mt-4"><Field label="Extra payment per month"><Input inputMode="decimal" value={extra} onChange={(e) => setExtra(e.target.value)} onBlur={() => DB.setSetting('debtExtra', extraNum)} /></Field></div>
+
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              {['avalanche', 'snowball'].map((k) => {
+                const p = d[k]; const sel = shown === k;
+                return (
+                  <button key={k} onClick={() => setStrategy(k)} className={cls('text-left rounded-xl border-2 p-3 transition-colors', sel ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 dark:border-slate-700')}>
+                    <div className="flex items-center justify-between"><p className="font-semibold capitalize">{k}</p>{d.recommended === k && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-brand-600 text-white">Best</span>}</div>
+                    <p className="text-[11px] text-slate-500">{k === 'avalanche' ? 'Highest APR first' : 'Smallest balance first'}</p>
+                    {p.feasible ? <>
+                      <p className="num font-bold mt-2">{monthsText(p.months)}</p>
+                      <p className="num text-xs text-slate-500">{fmt(p.totalInterest)} interest</p>
+                      <p className="num text-xs text-slate-500">first payoff: month {p.firstPayoffMonth}</p>
+                    </> : <p className="text-xs text-rose-600 mt-2">Doesn’t cover interest</p>}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-sm mt-3 flex gap-2"><Icon name="Target" size={16} className="text-brand-600 shrink-0 mt-0.5" /><span>{d.reason.replace(/(\d+\.\d{2})/g, (n) => fmt(Number(n)))}</span></p>
+            {d.interestSavedVsMinimum > 0 && <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1">vs. no extra payment: {fmt(d.interestSavedVsMinimum)} less interest, debt-free {d.monthsSavedVsMinimum} months sooner.</p>}
+
+            {plan2.feasible && <>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mt-5 mb-2">Payoff order · {shown}</p>
+              <ol className="space-y-3">
+                {plan2.order.map((o, i) => (
+                  <li key={o.id || o.name}>
+                    <div className="flex items-baseline justify-between text-sm">
+                      <span className="font-medium"><span className="text-slate-400 mr-1.5">{i + 1}.</span>{o.name} <span className="text-xs text-slate-500">{o.apr}%</span></span>
+                      <span className="num text-xs text-slate-500">{fmt(o.startBalance, true)} · paid off {monthLabel(addMonths(monthKey(todayISO()), o.paidOffMonth), { month: 'short', year: 'numeric' })}</span>
+                    </div>
+                    <div className="mt-1.5"><Bar value={o.paidOffMonth / plan2.months} className="bg-brand-500" /></div>
+                  </li>
+                ))}
+              </ol>
+              <p className="num text-xs text-slate-500 mt-3">{fmt(plan2.monthlyBudget)}/mo total · {fmt(plan2.totalPaid)} paid over {monthsText(plan2.months)}</p>
+            </>}
+          </Card>
+        )}
+
+        {/* ---- Recommendations ---- */}
+        {recs.length > 0 && <>
+          <SectionTitle>Next steps</SectionTitle>
+          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+            {recs.map((r) => (
+              <div key={r.id} className="flex gap-3 p-3.5">
+                <div className={cls('w-8 h-8 rounded-lg grid place-items-center shrink-0', r.severity === 'high' ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15' : r.severity === 'medium' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15')}>
+                  <Icon name={r.severity === 'high' ? 'ShieldAlert' : r.severity === 'medium' ? 'Lightbulb' : 'Target'} size={16} />
+                </div>
+                <div><p className="font-medium text-sm">{r.title}</p><p className="text-sm text-slate-600 dark:text-slate-300">{r.text.replace(/(\d+\.\d{2})/g, (n) => fmt(Number(n)))}</p></div>
+              </div>
+            ))}
+          </Card>
+        </>}
+
+        <p className="text-xs text-slate-400 text-center mt-6 px-4">Calculated on this device from your saved data using standard formulas. Debt-to-income uses take-home pay, so it reads higher than a lender’s gross-income figure. Educational estimates, not financial advice.</p>
+      </div>
+    );
+  }
+
   /* ============================================================= SETTINGS */
   const download = (name, content, type) => {
     const url = URL.createObjectURL(new Blob([content], { type }));
@@ -1333,9 +1527,10 @@
   /* ================================================================= APP */
   const TABS = [
     { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
-    { id: 'transactions', label: 'Transactions', icon: 'ArrowLeftRight' },
+    { id: 'transactions', label: 'Activity', aria: 'Transactions', icon: 'ArrowLeftRight' },
     { id: 'upload', label: 'Upload', icon: 'Upload' },
     { id: 'budget', label: 'Budget', aria: 'Budget & Debt', icon: 'PiggyBank' },
+    { id: 'advisor', label: 'Advisor', aria: 'Budget & Health Advisor', icon: 'HeartPulse' },
     { id: 'settings', label: 'Settings', icon: 'Settings' },
   ];
 
@@ -1426,19 +1621,20 @@
               {tab === 'transactions' && <Transactions />}
               {tab === 'upload' && <UploadView />}
               {tab === 'budget' && <BudgetDebt sub={sub} setSub={setSub} />}
+              {tab === 'advisor' && <AdvisorView />}
               {tab === 'settings' && <SettingsView />}
             </div>
           </main>
 
           <nav className="fixed bottom-0 inset-x-0 z-40 border-t border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 backdrop-blur-lg pb-safe" aria-label="Main">
-            <div className="max-w-lg mx-auto grid grid-cols-5">
+            <div className="max-w-lg mx-auto grid grid-cols-6">
               {TABS.map((t) => {
                 const active = tab === t.id;
                 return (
                   <button key={t.id} onClick={() => go(t.id)} aria-label={t.aria || t.label} aria-current={active ? 'page' : undefined}
-                    className={cls('flex flex-col items-center justify-center gap-1 h-16 text-[11px] font-medium transition-colors', active ? 'text-brand-600 dark:text-brand-400' : 'text-slate-500 dark:text-slate-400')}>
-                    <span className={cls('grid place-items-center w-12 h-7 rounded-full transition-colors', active && 'bg-brand-100 dark:bg-brand-500/15')}><Icon name={t.icon} size={20} strokeWidth={active ? 2.4 : 2} /></span>
-                    {t.label}
+                    className={cls('flex flex-col items-center justify-center gap-1 h-16 text-[10px] min-[380px]:text-[11px] font-medium transition-colors min-w-0', active ? 'text-brand-600 dark:text-brand-400' : 'text-slate-500 dark:text-slate-400')}>
+                    <span className={cls('grid place-items-center w-11 h-7 rounded-full transition-colors', active && 'bg-brand-100 dark:bg-brand-500/15')}><Icon name={t.icon} size={20} strokeWidth={active ? 2.4 : 2} /></span>
+                    <span className="max-w-full truncate px-0.5">{t.label}</span>
                   </button>
                 );
               })}

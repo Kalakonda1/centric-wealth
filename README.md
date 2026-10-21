@@ -9,6 +9,8 @@ Everything runs in the browser. Data lives in IndexedDB on the device; there are
 | `sw.js` | Service worker — caches the app and pinned CDN libraries for offline use |
 | `manifest.webmanifest` | Makes it installable ("Add to Home Screen") |
 | `statement-parser.js` | PDF/CSV statement import, categorisation and recurring detection |
+| `recurring-scanner.js` | Subscription & bill detection, Keep/Cancel decisions, reminders |
+| `advisor-engine.js` | Health score, 50/30/20 budget and debt payoff maths for the Advisor tab |
 | `icon*.png`, `icon.svg` | App icons |
 
 ## Deploy to GitHub Pages
@@ -63,3 +65,21 @@ Scans saved transactions for repeating charges. Everything is rule-based and run
   - in the background about once a day on Android, when the app is installed in Chrome;
   - on iPhone and iPad, only after **Add to Home Screen** (iOS 16.4+), and then only while the app is opened.
   The web has no way to schedule a notification for an exact future time without a push server. This app deliberately has no push server.
+
+## Budget & Health Advisor (`advisor-engine.js`)
+Everything is calculated on the device from IndexedDB data using standard formulas.
+
+- **Averages:** monthly figures average the last 3 complete months that have data, so a half-finished month doesn't skew them. Transfers are excluded.
+- **Health grade (A+ to F)** is made up of six factors, 100 points in total:
+  - savings rate: 25 points, full marks at 20% or more;
+  - debt-to-income: 20 points;
+  - emergency fund in months of essentials: 20 points;
+  - high-interest debt above 15% APR: 15 points;
+  - essentials share of income: 10 points;
+  - budgets on track: 10 points.
+
+  Spending more than you earn caps the grade at C, and a debt-to-income ratio above 50% caps it at D.
+- **50/30/20:** Needs, Wants and Savings targets are set from your actual income. Debt payments above the minimum count toward savings.
+- **Debt paydown:** a month-by-month simulation of avalanche (highest APR first) and snowball (smallest balance first) with rollover. It shows the payoff order, total interest and the debt-free date, and recommends the cheaper method. The Budget & Debt tab uses the same engine.
+
+Educational estimates, not financial advice.
