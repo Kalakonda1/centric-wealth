@@ -11,7 +11,7 @@ Everything runs in the browser. Data lives in IndexedDB on the device; there are
 | `statement-parser.js` | PDF/CSV statement import, categorisation and recurring detection |
 | `recurring-scanner.js` | Subscription & bill detection, Keep/Cancel decisions, reminders |
 | `advisor-engine.js` | Health score, 50/30/20 budget and debt payoff maths for the Advisor tab |
-| `google-workspace.js` | Optional Google sign-in, Gmail bill scanning and Drive monthly reports |
+| `monthly-report.js` | Builds the monthly report and downloads it as .md or .txt |
 | `icon*.png`, `icon.svg` | App icons |
 
 ## Deploy to GitHub Pages
@@ -105,34 +105,17 @@ A card payment appears on both statements. Both copies are stored as transfers, 
 
 **Activity:** the transaction list has the same three tabs.
 
-## Google Workspace (optional): Gmail bills and Drive reports
-**Sign-in:** uses Google Identity Services, Google's browser-only token flow. The `gapi` client library makes the API calls. No client secret and no server are involved.
+## Monthly report download (`monthly-report.js`)
+The **Dashboard** has a **Monthly report** card. Pick a month and a format, then tap **Download Monthly Report**. The app builds the file on the device and saves it straight to your Downloads, for example `Financial_Report_October_2026.md`. No server or API is involved.
 
-### One-time setup (about 5 minutes)
-1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create a project.
-2. Enable the **Gmail API** and the **Google Drive API**.
-3. On the OAuth consent screen, choose **External**, keep it in **Testing**, and add your Gmail address as a **test user**.
-4. Create an **OAuth client ID** of type **Web application**. Add your site (e.g. `https://yourname.github.io`) to **Authorized JavaScript origins**.
-5. Paste the Client ID into **Settings → Google account**, then tap **Connect Google Account**.
+- **Contents:**
+  - income and expenses (net cash flow and savings rate);
+  - every bank balance and credit card balance, with combined net balance;
+  - spending split between cards and bank;
+  - active subscriptions with their monthly cost;
+  - a category breakdown split by account type.
+- **Formats:** Markdown (`.md`, renders as tables in most notes apps and on GitHub) or plain text (`.txt`, aligned columns that read well anywhere).
+- **Preview** shows the report in the app first.
+- **Share / Save to Files** appears on phones that support sharing files, notably iPhone. It opens the system share sheet, which is the most reliable way to save into the Files app.
+- **How it works:** `MonthlyReport.build(data, 'YYYY-MM', 'md' | 'txt')` returns the text, and `MonthlyReport.download(...)` creates a Blob and clicks a temporary `<a download>` link.
 
-### Permissions
-| Scope | Why |
-|---|---|
-| `gmail.readonly` | Read bill and statement emails. Nothing is sent, changed or deleted. |
-| `drive.file` | Create reports. The app can only see files it created itself. |
-
-`gmail.readonly` is a Google *restricted* scope. Personal use in Testing mode works. Making the app public for other people would need Google's verification and security review.
-
-### Features
-- **Upload → Sync from Gmail:** searches the last 30/60/90 days with a subject query like `statement OR bill OR invoice`. It reads the amount due, due date and sender on this device. You can **Add as bill**, **Import** a PDF or CSV attachment through the normal statement importer, or **Ignore** each email.
-- **Advisor → Monthly report:** builds a Markdown or CSV report. It covers income, bank balances, credit card debt, subscriptions, and spending by category split into card and bank.
-  - **Download** saves the report locally.
-  - **Save Monthly Report to Drive** uploads `Financial_Report_<Month>_<Year>.md` (or `.csv`) into a "Centric Wealth Reports" folder. Saving the same month again updates that file.
-  - Saved reports are listed in the app and open in a viewer.
-
-### Sessions and errors
-- **Token storage:** the access token is kept in `sessionStorage`. It's scoped to the tab and lasts about 1 hour.
-- **Expired session:** shows a **Re-authenticate** button, then the action retries automatically.
-- **Rate limits and server errors:** retried automatically up to 3 times.
-- **Permission problems:** missing permissions or a disabled API show a message that says what to fix.
-- **Offline caching:** the service worker never caches Google requests.

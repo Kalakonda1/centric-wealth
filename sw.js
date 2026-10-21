@@ -1,8 +1,8 @@
 /* Centric Wealth service worker — offline-first caching. Bump VERSION on every deploy. */
-const VERSION = 'v1.5.0';
+const VERSION = 'v1.6.0';
 const CACHE = `centric-wealth-${VERSION}`;
 
-const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js', './recurring-scanner.js', './advisor-engine.js', './google-workspace.js'];
+const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js', './recurring-scanner.js', './advisor-engine.js', './monthly-report.js'];
 const CDN = [
   'https://cdn.tailwindcss.com/3.4.16',
   'https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js',
@@ -39,8 +39,8 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
-// Only the app's own files and the pinned CDN libraries are cached. Everything else - Google sign-in,
-// Gmail and Drive API calls - always goes straight to the network and is never stored.
+// Only the app's own files and the pinned CDN libraries are cached. Requests to any other site
+// go straight to the network and are never stored on the device.
 const CACHEABLE_HOSTS = new Set(['cdn.jsdelivr.net', 'cdn.tailwindcss.com']);
 const isCacheable = (url) => url.origin === self.location.origin || CACHEABLE_HOSTS.has(url.hostname);
 
