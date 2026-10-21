@@ -13,6 +13,7 @@ Everything runs in the browser. Data lives in IndexedDB on the device; there are
 | `advisor-engine.js` | Health score, 50/30/20 budget and debt payoff maths for the Advisor tab |
 | `monthly-report.js` | Monthly report as PDF, Markdown or text |
 | `analytics-engine.js` | Analytics calculations, Chart.js chart setups, savings funds |
+| `fonts/manrope-latin-var.woff2` | Manrope variable font, served from your own site (no font CDN). License: `fonts/OFL-Manrope.txt` |
 | `icon*.png`, `icon.svg` | App icons |
 
 ## Deploy to GitHub Pages
@@ -179,3 +180,16 @@ Credit limits come from card statements ("Credit Limit"), or you can enter them 
 - **Reports:** funds appear in the balances, a Savings & Emergency Fund section, and the Markdown and text reports.
 - **PDF chart summary:** the PDF also gets a **Chart Summary** page, with the charts drawn on the device as images.
 
+
+## Look & feel
+
+- **Theme:** cool mist light mode and deep navy dark mode, built from CSS variables (`--canvas`, `--card`, `--glass`…) at the top of `index.html`. Cards are soft translucent panels with navy-tinted shadows; real frosted glass (backdrop blur) is used only where content scrolls underneath (the floating nav dock, bottom sheets and toasts), which keeps scrolling smooth on phones.
+- **Hero:** the combined net balance sits on a deep navy card with faint concentric rings and counts up when it changes.
+- **Type:** Manrope, self-hosted in `fonts/` and precached by the service worker, so it works offline and no font request leaves the device.
+- **Motion:**
+  - Each tab's sections rise in one after another; statement rows fade up as they load from IndexedDB; a shimmer skeleton shows while the database opens.
+  - Buttons, tabs and chips scale down slightly when pressed; segmented controls and the nav dock have a sliding highlight.
+  - Bottom sheets spring up, slide back down when closed, and can be dragged down by their handle to dismiss. "Show numbers" and "Skipped rows" expand smoothly.
+  - Balances, income, expenses and savings count up to new values; savings bars fill with a moving sheen and the emergency fund keeps its liquid gauge.
+  - Charts: bars grow one after another, lines draw in from left to right with a soft glow, the doughnut rotates into place, and tooltips are dark glass with highlighted points.
+- **Reduce Motion:** if the phone's Reduce Motion setting is on, all of the above is switched off (numbers and charts appear instantly). PDF chart images are always rendered without animation.

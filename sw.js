@@ -1,8 +1,8 @@
 /* Centric Wealth service worker — offline-first caching. Bump VERSION on every deploy. */
-const VERSION = 'v1.8.0';
+const VERSION = 'v1.9.0';
 const CACHE = `centric-wealth-${VERSION}`;
 
-const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js', './recurring-scanner.js', './advisor-engine.js', './monthly-report.js', './analytics-engine.js'];
+const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js', './recurring-scanner.js', './advisor-engine.js', './monthly-report.js', './analytics-engine.js', './fonts/manrope-latin-var.woff2'];
 const CDN = [
   'https://cdn.tailwindcss.com/3.4.16',
   'https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js',

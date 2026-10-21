@@ -182,15 +182,66 @@
   /* ======================================================== Chart.js */
   let chartPromise = null;
   function loadChart() {
-    if (global.Chart) return Promise.resolve(global.Chart);
+    if (global.Chart) return Promise.resolve(setupChart(global.Chart));
     chartPromise ||= new Promise((resolve, reject) => {
       const s = document.createElement('script');
       s.src = CHART_URL; s.async = true; s.crossOrigin = 'anonymous';
-      s.onload = () => (global.Chart ? resolve(global.Chart) : reject(new Error('Chart.js did not start')));
+      s.onload = () => (global.Chart ? resolve(setupChart(global.Chart)) : reject(new Error('Chart.js did not start')));
       s.onerror = () => { chartPromise = null; reject(new Error(navigator.onLine === false ? 'You are offline and the chart library has not been downloaded yet. Connect once, then charts work offline.' : 'Could not load the chart library.')); };
       document.head.appendChild(s);
     });
     return chartPromise;
+  }
+
+  const reducedMotion = () => { try { return global.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) { return false; } };
+  const still = (chart) => chart.config.options && chart.config.options.animation === false; // PDF images, reduced motion
+
+  // Lines "draw in" from left to right on first render (clip widens with an ease-out curve).
+  const revealPlugin = {
+    id: 'cwReveal',
+    beforeDatasetsDraw(chart) {
+      if (chart.config.type !== 'line' || still(chart)) return;
+      const st = chart.$cwReveal || (chart.$cwReveal = { start: performance.now() });
+      const k = Math.min(1, (performance.now() - st.start) / 1300), e = 1 - Math.pow(1 - k, 3);
+      if (k >= 1) return;
+      const a = chart.chartArea, g = chart.ctx;
+      g.save(); g.beginPath(); g.rect(a.left - 6, 0, (a.right - a.left + 12) * e, chart.height); g.clip(); st.clipped = true;
+      if (!st.raf) st.raf = requestAnimationFrame(() => { st.raf = 0; if (chart.ctx) chart.draw(); });
+    },
+    afterDatasetsDraw(chart) { const st = chart.$cwReveal; if (st && st.clipped) { chart.ctx.restore(); st.clipped = false; } },
+  };
+  // Soft glow under lines and the tapped data point.
+  const glowPlugin = {
+    id: 'cwGlow',
+    beforeDatasetDraw(chart, args) {
+      if (still(chart) || chart.config.type !== 'line') return;
+      const ds = chart.data.datasets[args.index], g = chart.ctx; g.save();
+      g.shadowColor = (typeof ds.borderColor === 'string' ? ds.borderColor : '#10b981') + '88'; g.shadowBlur = 12; g.shadowOffsetY = 4;
+    },
+    afterDatasetDraw(chart) { if (!still(chart) && chart.config.type === 'line') chart.ctx.restore(); },
+  };
+  let chartReady = false;
+  function setupChart(Chart) {
+    if (chartReady) return Chart; chartReady = true;
+    Chart.register(revealPlugin, glowPlugin);
+    Chart.defaults.font.family = "Manrope, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+    return Chart;
+  }
+
+  /** Glass-style tooltip shared by every chart. */
+  function tooltip(t, label) {
+    return {
+      backgroundColor: t.mode === 'dark' ? 'rgba(30, 41, 59, .92)' : 'rgba(15, 23, 42, .88)', borderColor: 'rgba(255, 255, 255, .10)', borderWidth: 1,
+      titleColor: '#fff', bodyColor: '#e2e8f0', titleFont: { weight: '700', size: 12 }, bodyFont: { size: 12 },
+      padding: 12, cornerRadius: 12, caretSize: 6, boxPadding: 6, usePointStyle: true, displayColors: true,
+      animation: { duration: 180, easing: 'easeOutQuad' }, callbacks: { label },
+    };
+  }
+  // Entry animation: bars grow up one after another; reduced-motion users get none.
+  function entryAnimation(kind) {
+    if (reducedMotion()) return false;
+    if (kind === 'bar') return { duration: 900, easing: 'easeOutQuart', delay: (c) => (c.type === 'data' && c.mode === 'default' ? c.dataIndex * 60 + c.datasetIndex * 90 : 0) };
+    return { duration: 900, easing: 'easeOutCubic' };
   }
 
   /** Validated palette (dataviz reference instance): fixed categorical order, separate status colors. */
@@ -200,20 +251,20 @@
       mode,
       series: dark ? ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'] : ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'],
       status: { good: '#0ca30c', warning: '#fab219', serious: '#ec835a', critical: '#d03b3b' },
-      surface: dark ? '#0f172a' : '#ffffff', ink: dark ? '#f0efec' : '#0b0b0b', ink2: dark ? '#c3c2b7' : '#52514e', muted: '#898781',
-      grid: dark ? '#2c2c2a' : '#e1e0d9', axis: dark ? '#383835' : '#c3c2b7', neutral: dark ? '#383835' : '#e2e8f0',
+      surface: dark ? '#111b2c' : '#ffffff', ink: dark ? '#f0efec' : '#0b0b0b', ink2: dark ? '#c3c2b7' : '#52514e', muted: '#898781',
+      grid: dark ? 'rgba(148,163,184,.12)' : 'rgba(15,23,42,.07)', axis: dark ? 'rgba(148,163,184,.25)' : 'rgba(15,23,42,.18)', neutral: dark ? '#383835' : '#e2e8f0',
     };
   }
 
-  function baseOptions(t, fmt, extra = {}) {
+  function baseOptions(t, fmt, extra = {}, kind = 'line') {
     return {
       responsive: true, maintainAspectRatio: false,
-      animation: { duration: 700, easing: 'easeOutCubic' },
+      animation: entryAnimation(kind),
       layout: { padding: { top: 4, right: 6 } },
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { position: 'bottom', labels: { color: t.ink2, boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'rectRounded', padding: 14, font: { size: 11 } } },
-        tooltip: { backgroundColor: t.mode === 'dark' ? '#1e293b' : '#0f172a', titleColor: '#fff', bodyColor: '#e2e8f0', padding: 10, cornerRadius: 8, boxPadding: 4, callbacks: { label: (c) => `${c.dataset.label}: ${fmt(c.parsed.y ?? c.parsed)}` } },
+        tooltip: tooltip(t, (c) => `${c.dataset.label}: ${fmt(c.parsed.y ?? c.parsed)}`),
       },
       scales: {
         x: { grid: { display: false }, border: { color: t.axis }, ticks: { color: t.muted, font: { size: 11 }, maxRotation: 0, autoSkipPadding: 12 } },
@@ -222,8 +273,13 @@
       ...extra,
     };
   }
-  const bar = (label, data, color, stack, extra = {}) => ({ label, data, backgroundColor: color, borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'bottom', borderWidth: 0, stack, maxBarThickness: 26, categoryPercentage: 0.7, barPercentage: 0.9, ...extra });
-  const line = (label, data, color, extra = {}) => ({ label, data, borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 10, tension: 0.3, spanGaps: true, ...extra });
+  const bar = (label, data, color, stack, extra = {}) => ({ label, data, backgroundColor: color, hoverBackgroundColor: typeof color === 'string' ? color + 'd9' : color, borderRadius: { topLeft: 6, topRight: 6 }, borderSkipped: 'bottom', borderWidth: 0, stack, maxBarThickness: 26, categoryPercentage: 0.7, barPercentage: 0.9, ...extra });
+  const line = (label, data, color, extra = {}) => ({ label, data, borderColor: color, backgroundColor: color, borderWidth: 2.25, pointRadius: 0, pointHoverRadius: 6, pointHoverBorderWidth: 3, pointHoverBorderColor: '#ffffff', pointHoverBackgroundColor: color, pointHitRadius: 14, tension: 0.35, spanGaps: true, borderCapStyle: 'round', ...extra });
+  // Vertical gradient under an area line (fades to transparent at the bottom).
+  const areaFill = (color) => (c) => {
+    const a = c.chart.chartArea; if (!a) return color + '22';
+    const g = c.chart.ctx.createLinearGradient(0, a.top, 0, a.bottom); g.addColorStop(0, color + '55'); g.addColorStop(1, color + '00'); return g;
+  };
   // 2px surface gap between stacked segments (no outlines).
   const gapStack = (t) => ({ borderColor: t.surface, borderWidth: { top: 2 } });
 
@@ -235,12 +291,12 @@
         bar('Income', series.map((m) => m.income), s[0], 'income'),
         bar('Credit card charges', series.map((m) => m.credit), s[1], 'expense', { borderRadius: 0 }),
         bar('Bank outflows', series.map((m) => m.bank), s[2], 'expense', { borderRadius: 0, ...gapStack(t) }),
-        bar('Cash spent', series.map((m) => m.cash), s[3], 'expense', { borderRadius: { topLeft: 4, topRight: 4 }, ...gapStack(t) }),
-      ] }, options: baseOptions(t, fmt, {}) };
+        bar('Cash spent', series.map((m) => m.cash), s[3], 'expense', { borderRadius: { topLeft: 6, topRight: 6 }, ...gapStack(t) }),
+      ] }, options: baseOptions(t, fmt, {}, 'bar') };
     },
     /** Monthly credit charges stacked per card. */
     creditSpending(cc, labels, t, fmt) {
-      return { type: 'bar', data: { labels, datasets: cc.cards.slice(0, 6).map((c, i, arr) => bar(c.name, c.charges, t.series[i], 'cards', { borderRadius: i === arr.length - 1 ? { topLeft: 4, topRight: 4 } : 0, ...(i ? gapStack(t) : {}) })) }, options: baseOptions(t, fmt) };
+      return { type: 'bar', data: { labels, datasets: cc.cards.slice(0, 6).map((c, i, arr) => bar(c.name, c.charges, t.series[i], 'cards', { borderRadius: i === arr.length - 1 ? { topLeft: 6, topRight: 6 } : 0, ...(i ? gapStack(t) : {}) })) }, options: baseOptions(t, fmt, {}, 'bar') };
     },
     /** End-of-month amount owed: one line per card plus the total. */
     debtTrajectory(cc, labels, t, fmt) {
@@ -251,20 +307,21 @@
     /** Category doughnut (<= 6 segments). */
     categories(cat, t, fmt) {
       const colors = cat.rows.map((r, i) => (r.category === 'Other' && i === cat.rows.length - 1 ? t.muted : t.series[i]));
-      return { type: 'doughnut', data: { labels: cat.rows.map((r) => r.category), datasets: [{ data: cat.rows.map((r) => r.total), backgroundColor: colors, borderColor: t.surface, borderWidth: 2, hoverOffset: 6 }] },
-        options: { responsive: true, maintainAspectRatio: false, cutout: '68%', animation: { animateRotate: true, duration: 800 },
-          plugins: { legend: { display: false }, tooltip: { backgroundColor: '#0f172a', padding: 10, cornerRadius: 8, callbacks: { label: (c) => `${c.label}: ${fmt(c.parsed)} (${Math.round((c.parsed / cat.total) * 100)}%)` } } } } };
+      return { type: 'doughnut', data: { labels: cat.rows.map((r) => r.category), datasets: [{ data: cat.rows.map((r) => r.total), backgroundColor: colors, borderColor: t.surface, borderWidth: 2, borderRadius: 4, hoverOffset: 8, hoverBorderColor: t.surface }] },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '70%', layout: { padding: 6 },
+          animation: reducedMotion() ? false : { animateRotate: true, animateScale: true, duration: 1100, easing: 'easeOutQuart' },
+          plugins: { legend: { display: false }, tooltip: tooltip(t, (c) => ` ${c.label}: ${fmt(c.parsed)} (${Math.round((c.parsed / cat.total) * 100)}%)`) } } };
     },
     /** Savings rate per month (single series; negative months drop below zero). */
     savingsRate(series, t) {
-      return { type: 'bar', data: { labels: series.map((m) => m.label), datasets: [bar('Savings rate', series.map((m) => (m.savingsRate == null ? null : Math.round(m.savingsRate * 100))), series.map((m) => (m.savingsRate != null && m.savingsRate < 0 ? t.status.critical : t.series[0])), 'rate', { borderRadius: 4, borderSkipped: false })] },
-        options: baseOptions(t, (v) => `${v}%`, { plugins: { legend: { display: false }, tooltip: { backgroundColor: '#0f172a', padding: 10, cornerRadius: 8, callbacks: { label: (c) => `Saved ${c.parsed.y}% of income` } } } }) };
+      return { type: 'bar', data: { labels: series.map((m) => m.label), datasets: [bar('Savings rate', series.map((m) => (m.savingsRate == null ? null : Math.round(m.savingsRate * 100))), series.map((m) => (m.savingsRate != null && m.savingsRate < 0 ? t.status.critical : t.series[0])), 'rate', { borderRadius: 6, borderSkipped: false })] },
+        options: baseOptions(t, (v) => `${v}%`, { plugins: { legend: { display: false }, tooltip: tooltip(t, (c) => `Saved ${c.parsed.y}% of income`) } }, 'bar') };
     },
     /** Bank + cash balance over time. */
     cashFlow(cf, t, fmt) {
       const labels = cf.points.map((p) => { const d = parseISO(p.date); return `${MON[d.getMonth()]} ${d.getDate()}`; });
-      return { type: 'line', data: { labels, datasets: [line('Bank & cash balance', cf.points.map((p) => p.balance), t.series[0], { fill: 'origin', backgroundColor: t.series[0] + '22', tension: 0.25, stepped: false })] },
-        options: baseOptions(t, fmt, { plugins: { legend: { display: false }, tooltip: { backgroundColor: '#0f172a', padding: 10, cornerRadius: 8, callbacks: { label: (c) => `Balance: ${fmt(c.parsed.y)}` } } }, scales: { ...baseOptions(t, fmt).scales, x: { ...baseOptions(t, fmt).scales.x, ticks: { ...baseOptions(t, fmt).scales.x.ticks, maxTicksLimit: 6 } }, y: { ...baseOptions(t, fmt).scales.y, beginAtZero: false } } }) };
+      return { type: 'line', data: { labels, datasets: [line('Bank & cash balance', cf.points.map((p) => p.balance), t.series[0], { fill: 'origin', backgroundColor: areaFill(t.series[0]), tension: 0.3, stepped: false })] },
+        options: baseOptions(t, fmt, { plugins: { legend: { display: false }, tooltip: tooltip(t, (c) => `Balance: ${fmt(c.parsed.y)}`) }, scales: { ...baseOptions(t, fmt).scales, x: { ...baseOptions(t, fmt).scales.x, ticks: { ...baseOptions(t, fmt).scales.x.ticks, maxTicksLimit: 6 } }, y: { ...baseOptions(t, fmt).scales.y, beginAtZero: false } } }) };
     },
   };
 

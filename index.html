@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Centric Wealth — Private Finance</title>
   <meta name="description" content="Offline-first personal finance tracker. All data stays on this device." />
-  <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)" />
-  <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#070d18" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#eef2f6" media="(prefers-color-scheme: light)" />
+  <link rel="preload" href="./fonts/manrope-latin-var.woff2" as="font" type="font/woff2" crossorigin />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -25,11 +26,13 @@
       theme: {
         extend: {
           fontFamily: {
-            sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+            sans: ['Manrope', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
           },
           colors: {
             brand: { 50:'#ecfdf5',100:'#d1fae5',400:'#34d399',500:'#10b981',600:'#059669',700:'#047857' },
+            ink: { 700: '#1c2b40', 800: '#132136', 900: '#0e1b2c', 950: '#070d18' },
           },
+          transitionTimingFunction: { spring: 'cubic-bezier(.22,1.2,.36,1)', out: 'cubic-bezier(.22,1,.36,1)' },
         },
       },
     };
@@ -40,19 +43,107 @@
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.453.0/dist/umd/lucide.min.js"></script>
 
   <style>
-    :root { color-scheme: light dark; }
-    html, body { height: 100%; overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
-    body { font-feature-settings: "tnum" 1, "cv11" 1; }
+    /* Manrope (SIL Open Font License, fonts/OFL-Manrope.txt) - served from this site, no font CDN. */
+    @font-face { font-family: 'Manrope'; src: url('./fonts/manrope-latin-var.woff2') format('woff2'); font-weight: 200 800; font-style: normal; font-display: swap; }
+
+    /* ---------- design tokens ---------- */
+    :root {
+      color-scheme: light;
+      --canvas: #eef2f6;
+      --glow-a: rgba(16, 185, 129, .13);    /* emerald haze */
+      --glow-b: rgba(42, 120, 214, .11);    /* blue haze */
+      --card: rgba(255, 255, 255, .84);
+      --card-solid: #ffffff;
+      --card-border: rgba(255, 255, 255, .95);
+      --card-shadow: 0 1px 2px rgba(14, 27, 44, .05), 0 14px 30px -18px rgba(14, 27, 44, .30);
+      --glass: rgba(255, 255, 255, .70);
+      --glass-border: rgba(255, 255, 255, .75);
+      --glass-shadow: 0 20px 44px -20px rgba(14, 27, 44, .45);
+      --sheet: rgba(250, 252, 254, .94);
+      --ease-out: cubic-bezier(.22, 1, .36, 1);
+      --ease-spring: cubic-bezier(.22, 1.18, .36, 1);
+    }
+    :root.dark {
+      color-scheme: dark;
+      --canvas: #070d18;
+      --glow-a: rgba(16, 185, 129, .13);
+      --glow-b: rgba(57, 135, 229, .16);
+      --card: rgba(18, 28, 46, .80);
+      --card-solid: #111b2c;
+      --card-border: rgba(148, 163, 184, .10);
+      --card-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 18px 36px -20px rgba(0, 0, 0, .75);
+      --glass: rgba(14, 23, 38, .72);
+      --glass-border: rgba(148, 163, 184, .16);
+      --glass-shadow: 0 22px 48px -22px rgba(0, 0, 0, .9);
+      --sheet: rgba(13, 21, 35, .94);
+    }
+    html, body { min-height: 100%; overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
+    body { background: var(--canvas); font-feature-settings: "tnum" 1, "cv11" 1; text-rendering: optimizeLegibility; }
+    /* Soft color haze behind everything (fixed, so cards scroll over it) */
+    body::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background: radial-gradient(42rem 30rem at 105% -8%, var(--glow-b), transparent 62%), radial-gradient(36rem 28rem at -15% 28%, var(--glow-a), transparent 60%); }
     .num { font-variant-numeric: tabular-nums; }
     .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
     .pt-safe { padding-top: env(safe-area-inset-top); }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { scrollbar-width: none; }
     input, select, textarea { font-size: 16px; } /* stops iOS zoom-on-focus */
-    @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    ::selection { background: rgba(16, 185, 129, .25); }
+
+    /* ---------- surfaces ---------- */
+    .card { background: var(--card); border: 1px solid var(--card-border); box-shadow: var(--card-shadow); border-radius: 22px; }
+    /* Real frosted glass only where something scrolls underneath: nav dock, sheets, toasts. */
+    .glass { background: var(--glass); border: 1px solid var(--glass-border); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: blur(22px) saturate(170%); backdrop-filter: blur(22px) saturate(170%); }
+    .glass-sheet { background: var(--sheet); -webkit-backdrop-filter: blur(26px) saturate(160%); backdrop-filter: blur(26px) saturate(160%); box-shadow: 0 -18px 50px -20px rgba(14, 27, 44, .35); }
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .glass, .glass-sheet { background: var(--card-solid); } }
+    /* The hero: deep navy glass with concentric rings - the one bold element. */
+    .hero { position: relative; overflow: hidden; border-radius: 28px; color: #f1f5f9;
+      background: radial-gradient(120% 90% at 100% 0%, rgba(52, 211, 160, .28), transparent 55%), linear-gradient(155deg, #13243b 0%, #0b1626 70%);
+      box-shadow: 0 24px 50px -24px rgba(7, 13, 24, .85), inset 0 1px 0 rgba(255, 255, 255, .08); }
+
+    /* ---------- interaction ---------- */
+    .press { transition: transform .18s var(--ease-out), background-color .25s, color .25s, box-shadow .25s, opacity .25s; }
+    .press:active:not(:disabled) { transform: scale(.965); }
+    .lift { transition: transform .22s var(--ease-out), box-shadow .3s var(--ease-out); }
+    .lift:active { transform: scale(.985); }
+    @media (hover: hover) { .lift:hover { transform: translateY(-2px); box-shadow: 0 1px 2px rgba(14,27,44,.05), 0 22px 40px -20px rgba(14,27,44,.40); } }
+
+    /* ---------- motion ---------- */
+    @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    .sheet { animation: sheetUp .22s cubic-bezier(.2,.8,.2,1); }
-    .fade { animation: fadeIn .18s ease-out; }
+    @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+    @keyframes sheetIn { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    @keyframes sheetOut { from { transform: translateY(0); } to { transform: translateY(105%); } }
+    @keyframes toastIn { from { opacity: 0; transform: translateY(-16px) scale(.96); } to { opacity: 1; transform: none; } }
+    @keyframes shimmer { from { background-position: 150% 0; } to { background-position: -150% 0; } }
+    @keyframes sheen { from { transform: translateX(-120%); } to { transform: translateX(220%); } }
+    @keyframes fabIn { from { opacity: 0; transform: translateY(16px) scale(.9); } to { opacity: 1; transform: none; } }
+    /* Page entry: the page's sections rise in, one after another (plays when a tab opens). */
+    .stagger > div > *:not([role=dialog]) { animation: rise .5s var(--ease-out) both; }
+    .stagger > div > *:nth-child(2) { animation-delay: .04s; } .stagger > div > *:nth-child(3) { animation-delay: .08s; }
+    .stagger > div > *:nth-child(4) { animation-delay: .12s; } .stagger > div > *:nth-child(5) { animation-delay: .16s; }
+    .stagger > div > *:nth-child(6) { animation-delay: .2s; } .stagger > div > *:nth-child(7) { animation-delay: .24s; }
+    .stagger > div > *:nth-child(8) { animation-delay: .28s; } .stagger > div > *:nth-child(n+9) { animation-delay: .32s; }
+    /* Statement rows fade up as they come in from IndexedDB */
+    .rise-list > * { animation: rise .42s var(--ease-out) both; }
+    .rise-list > *:nth-child(2) { animation-delay: .03s; } .rise-list > *:nth-child(3) { animation-delay: .06s; } .rise-list > *:nth-child(4) { animation-delay: .09s; }
+    .rise-list > *:nth-child(5) { animation-delay: .12s; } .rise-list > *:nth-child(6) { animation-delay: .15s; } .rise-list > *:nth-child(n+7) { animation-delay: .18s; }
+    .fade-in { animation: fadeIn .3s var(--ease-out) both; }
+    .sheet-in { animation: sheetIn .46s var(--ease-spring) backwards; }
+    .sheet-out { animation: sheetOut .26s cubic-bezier(.4, 0, 1, 1) forwards; }
+    .backdrop-in { animation: fadeIn .3s ease-out both; }
+    .backdrop-out { animation: fadeOut .26s ease-in forwards; }
+    .toast-in { animation: toastIn .42s var(--ease-spring) both; }
+    .fab-in { animation: fabIn .5s .25s var(--ease-spring) both; }
+    .skeleton { background: linear-gradient(100deg, rgba(148,163,184,.13) 30%, rgba(148,163,184,.30) 50%, rgba(148,163,184,.13) 70%); background-size: 300% 100%; animation: shimmer 1.5s ease-in-out infinite; border-radius: 14px; }
+    /* Accordion: animates to the content's natural height */
+    .accordion { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .32s var(--ease-out), opacity .32s; opacity: 0; }
+    .accordion.open { grid-template-rows: 1fr; opacity: 1; }
+    .accordion > div { overflow: hidden; min-height: 0; }
+    /* Progress fills: gradient with a slow light sweep */
+    .grow-bar { position: relative; overflow: hidden; transition: width 1.1s var(--ease-out); }
+    .grow-bar.liquid::after { content: ''; position: absolute; inset: 0; width: 45%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent); animation: sheen 2.8s 1s ease-in-out infinite; }
+
     /* Savings animations: liquid waves, money pop-ups, glow on deposit */
     @keyframes waveX { from { transform: translateX(0); } to { transform: translateX(-50%); } }
     .wave-a { animation: waveX 6s linear infinite; transform-box: fill-box; }
@@ -61,12 +152,16 @@
     .pop-up { animation: popUp 1.9s ease-out forwards; }
     @keyframes glowRing { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,.45); } 100% { box-shadow: 0 0 0 16px rgba(16,185,129,0); } }
     .glow { animation: glowRing 1.1s ease-out; }
-    .grow-bar { transition: width 1.1s cubic-bezier(.22,1,.36,1); }
-    @media (prefers-reduced-motion: reduce) { .sheet, .fade, .wave-a, .wave-b, .pop-up, .glow { animation: none; } .grow-bar { transition: none; } }
+
+    @media (prefers-reduced-motion: reduce) {
+      .stagger > div > *:not([role=dialog]), .rise-list > *, .fade-in, .sheet-in, .sheet-out, .backdrop-in, .backdrop-out, .toast-in, .fab-in, .skeleton,
+      .wave-a, .wave-b, .pop-up, .glow, .grow-bar.liquid::after { animation: none !important; }
+      .grow-bar, .press, .lift, .accordion { transition: none !important; }
+    }
     #boot { position: fixed; inset: 0; display: grid; place-items: center; font: 14px system-ui; color: #64748b; }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased">
+<body class="text-slate-900 dark:text-slate-100 antialiased">
   <div id="root"><div id="boot">Loading Centric Wealth…</div></div>
   <noscript>Centric Wealth needs JavaScript enabled. Your data never leaves this device.</noscript>
 
@@ -363,60 +458,90 @@
 
   /* ------------------------------------------------------- UI primitives */
   const Card = ({ className = '', children, ...p }) => (
-    <div className={cls('rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 shadow-sm', className)} {...p}>{children}</div>
+    <div className={cls('card', className)} {...p}>{children}</div>
   );
   const SectionTitle = ({ children, action }) => (
-    <div className="flex items-center justify-between px-1 mb-2 mt-6">
-      <h2 className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{children}</h2>
+    <div className="flex items-end justify-between px-1 mb-2.5 mt-7">
+      <h2 className="text-[17px] font-bold tracking-tight text-slate-800 dark:text-slate-100">{children}</h2>
       {action}
     </div>
   );
   const Button = ({ variant = 'primary', className = '', children, ...p }) => {
     const styles = {
-      primary: 'bg-brand-600 text-white active:bg-brand-700 disabled:opacity-50',
-      secondary: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100 active:bg-slate-200 dark:active:bg-slate-700',
-      danger: 'bg-rose-600 text-white active:bg-rose-700',
-      ghost: 'text-brand-700 dark:text-brand-400 active:bg-slate-100 dark:active:bg-slate-800',
+      primary: 'text-white bg-gradient-to-b from-brand-500 to-brand-600 shadow-[0_8px_18px_-8px_rgba(5,150,105,.7),inset_0_1px_0_rgba(255,255,255,.25)] active:from-brand-600 active:to-brand-700',
+      secondary: 'bg-slate-900/[.05] text-slate-800 dark:bg-white/[.07] dark:text-slate-100 active:bg-slate-900/10 dark:active:bg-white/10',
+      danger: 'text-white bg-gradient-to-b from-rose-500 to-rose-600 shadow-[0_8px_18px_-8px_rgba(225,29,72,.6)]',
+      ghost: 'text-brand-700 dark:text-brand-400 active:bg-brand-500/10',
     };
-    return <button className={cls('inline-flex items-center justify-center gap-2 rounded-xl px-4 h-11 text-[15px] font-semibold transition-colors', styles[variant], className)} {...p}>{children}</button>;
+    return <button className={cls('press inline-flex items-center justify-center gap-2 rounded-[14px] px-4 h-11 text-[15px] font-semibold disabled:opacity-50 disabled:shadow-none', styles[variant], className)} {...p}>{children}</button>;
   };
   const Field = ({ label, hint, children }) => (
     <label className="block">
-      <span className="block text-[13px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">{label}</span>
+      <span className="block text-[13px] font-semibold text-slate-600 dark:text-slate-300 mb-1.5">{label}</span>
       {children}
       {hint && <span className="block text-xs text-slate-500 mt-1">{hint}</span>}
     </label>
   );
-  const inputCls = 'w-full h-11 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500';
+  const inputCls = 'w-full h-11 rounded-[14px] border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-white/[.04] px-3 outline-none transition-all duration-300 ease-in-out focus:ring-4 focus:ring-brand-500/15 focus:border-brand-500 focus:bg-white dark:focus:bg-white/[.06]';
   const Input = (p) => <input className={inputCls} {...p} />;
   const Select = ({ options, ...p }) => (
     <select className={inputCls} {...p}>{options.map((o) => typeof o === 'string' ? <option key={o} value={o}>{o}</option> : <option key={o.value} value={o.value}>{o.label}</option>)}</select>
   );
-  const Segmented = ({ value, onChange, options }) => (
-    <div className="grid rounded-xl bg-slate-200/70 dark:bg-slate-800 p-1" style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}>
-      {options.map((o) => (
-        <button key={o.value} type="button" onClick={() => onChange(o.value)}
-          className={cls('h-9 rounded-lg text-sm font-semibold transition-colors', value === o.value ? 'bg-white dark:bg-slate-950 shadow-sm text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400')}>
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
+  // Segmented control with a pill that slides to the chosen option.
+  const Segmented = ({ value, onChange, options }) => {
+    const i = Math.max(0, options.findIndex((o) => o.value === value)), n = options.length;
+    return (
+      <div className="relative grid rounded-[14px] bg-slate-900/[.06] dark:bg-white/[.06] p-1" style={{ gridTemplateColumns: `repeat(${n}, 1fr)` }}>
+        <span aria-hidden="true" className="absolute top-1 bottom-1 left-1 rounded-[10px] bg-white dark:bg-slate-700/80 shadow-[0_2px_8px_-2px_rgba(14,27,44,.25)] transition-transform duration-300 ease-out"
+          style={{ width: `calc((100% - .5rem) / ${n})`, transform: `translateX(${i * 100}%)` }} />
+        {options.map((o) => (
+          <button key={o.value} type="button" onClick={() => onChange(o.value)} aria-pressed={value === o.value}
+            className={cls('press relative z-10 h-9 rounded-[10px] text-sm font-semibold', value === o.value ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400')}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    );
+  };
   const Progress = ({ value }) => {
-    const pct = Math.min(100, Math.max(0, value * 100));
-    const color = value > 1 ? 'bg-rose-500' : value > 0.85 ? 'bg-amber-500' : 'bg-brand-500';
-    return <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden"><div className={cls('h-full rounded-full', color)} style={{ width: `${pct}%` }} /></div>;
+    const pct = Math.min(1, Math.max(0, value));
+    const color = value > 1 ? 'linear-gradient(90deg,#fb7185,#e11d48)' : value > 0.85 ? 'linear-gradient(90deg,#fcd34d,#f59e0b)' : 'linear-gradient(90deg,#34d399,#059669)';
+    return <GrowBar value={pct} color={color} h="h-2" track="bg-slate-900/[.06] dark:bg-white/[.07]" />;
   };
   const Empty = ({ icon, title, body, action }) => (
-    <div className="text-center py-10 px-6">
-      <div className="mx-auto mb-3 w-12 h-12 rounded-2xl grid place-items-center bg-slate-100 dark:bg-slate-800 text-slate-500"><Icon name={icon} size={22} /></div>
-      <p className="font-semibold">{title}</p>
+    <div className="text-center py-10 px-6 fade-in">
+      <div className="mx-auto mb-3 w-14 h-14 rounded-[18px] grid place-items-center bg-gradient-to-br from-brand-500/15 to-sky-500/10 text-brand-700 dark:text-brand-400"><Icon name={icon} size={24} /></div>
+      <p className="font-bold">{title}</p>
       {body && <p className="text-sm text-slate-500 mt-1">{body}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );
+  // Accordion that animates open/closed (replaces <details>).
+  function Disclosure({ summary, children, className = '', summaryClass = 'text-slate-500 font-semibold' }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <div className={className}>
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className={cls('press inline-flex items-center gap-1 py-1', summaryClass)}>
+          <Icon name="ChevronRight" size={14} className={cls('transition-transform duration-300 ease-in-out', open && 'rotate-90')} />{summary}
+        </button>
+        <div className={cls('accordion', open && 'open')} aria-hidden={!open} inert={open ? undefined : ''}><div>{children}</div></div>
+      </div>
+    );
+  }
 
+  // Bottom sheet: springs up, slides down on close, can be dragged down by its handle to dismiss.
   function Sheet({ open, title, onClose, children }) {
+    const [mounted, setMounted] = useState(open), [closing, setClosing] = useState(false);
+    const cached = useRef(children), panel = useRef(), drag = useRef(null);
+    if (open) cached.current = children;
+    useEffect(() => {
+      if (open) { setMounted(true); setClosing(false); return; }
+      if (!mounted) return;
+      if (prefersReducedMotion()) { setMounted(false); return; }
+      setClosing(true);
+      const t = setTimeout(() => { setMounted(false); setClosing(false); }, 260);
+      return () => clearTimeout(t);
+    }, [open]);
     useEffect(() => {
       if (!open) return;
       const onKey = (e) => e.key === 'Escape' && onClose();
@@ -424,19 +549,29 @@
       document.body.style.overflow = 'hidden';
       return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
     }, [open, onClose]);
-    if (!open) return null;
+    const onDown = (e) => { drag.current = { y: e.clientY, dy: 0 }; e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId); };
+    const onMove = (e) => { if (!drag.current || !panel.current) return; const dy = Math.max(0, e.clientY - drag.current.y); drag.current.dy = dy; panel.current.style.transition = 'none'; panel.current.style.transform = `translateY(${dy}px)`; };
+    const onUp = () => {
+      if (!drag.current || !panel.current) return; const { dy } = drag.current; drag.current = null;
+      panel.current.style.transition = 'transform .3s cubic-bezier(.22,1,.36,1)';
+      if (dy > 110) { panel.current.style.transform = 'translateY(105%)'; setTimeout(onClose, 200); }
+      else panel.current.style.transform = '';
+    };
+    if (!mounted) return null;
     return (
       <div className="fixed inset-0 z-50 flex items-end justify-center" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="absolute inset-0 bg-slate-950/50 fade" onClick={onClose} />
-        <div className="sheet relative w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-t-3xl bg-white dark:bg-slate-900 pb-safe">
-          <div className="sticky top-0 z-10 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-5 pt-3 pb-3 border-b border-slate-100 dark:border-slate-800">
-            <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-300 dark:bg-slate-700" />
+        <div className={cls('absolute inset-0 bg-slate-950/45 backdrop-blur-[3px]', closing ? 'backdrop-out' : 'backdrop-in')} onClick={onClose} />
+        <div ref={panel} className={cls('glass-sheet relative w-full max-w-lg max-h-[92vh] overflow-y-auto overscroll-contain rounded-t-[30px] border-t border-white/60 dark:border-white/10 pb-safe', closing ? 'sheet-out' : 'sheet-in')}>
+          <div className="sticky top-0 z-10 px-5 pt-2.5 pb-3 bg-[var(--sheet)] border-b border-slate-900/[.05] dark:border-white/[.06]">
+            <div className="mx-auto -mt-1 mb-2 h-6 w-24 grid place-items-center cursor-grab touch-none" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} aria-hidden="true">
+              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-slate-600" />
+            </div>
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold">{title}</h3>
-              <button onClick={onClose} className="w-9 h-9 grid place-items-center rounded-full bg-slate-100 dark:bg-slate-800" aria-label="Close"><Icon name="X" size={18} /></button>
+              <h3 className="text-lg font-bold tracking-tight">{title}</h3>
+              <button onClick={onClose} className="press w-9 h-9 grid place-items-center rounded-full bg-slate-900/[.06] dark:bg-white/[.08]" aria-label="Close"><Icon name="X" size={18} /></button>
             </div>
           </div>
-          <div className="px-5 py-4">{children}</div>
+          <div className="px-5 py-4">{open ? children : cached.current}</div>
         </div>
       </div>
     );
@@ -445,8 +580,24 @@
   function Toast({ toast }) {
     if (!toast) return null;
     return (
-      <div className="fixed left-1/2 -translate-x-1/2 bottom-24 z-[60] fade pb-safe">
-        <div className={cls('px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium text-white', toast.kind === 'error' ? 'bg-rose-600' : 'bg-slate-900 dark:bg-slate-700')}>{toast.msg}</div>
+      <div className="fixed inset-x-0 z-[60] flex justify-center pointer-events-none px-6" style={{ top: 'calc(env(safe-area-inset-top) + .75rem)' }} role="status">
+        <div key={toast.msg + toast.kind} className={cls('toast-in inline-flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold', toast.kind === 'error' ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30' : 'glass text-slate-900 dark:text-white')}>
+          <Icon name={toast.kind === 'error' ? 'CircleAlert' : 'CircleCheck'} size={17} className={toast.kind === 'error' ? '' : 'text-emerald-600 dark:text-emerald-400'} />{toast.msg}
+        </div>
+      </div>
+    );
+  }
+
+  // Shimmer placeholders shown while IndexedDB opens.
+  function SkeletonScreen() {
+    const B = ({ c }) => <div className={cls('skeleton', c)} />;
+    return (
+      <div className="max-w-lg mx-auto px-4 pt-safe" aria-busy="true" aria-label="Loading your data">
+        <div className="pt-5 flex justify-between items-end"><div className="space-y-2"><B c="h-3.5 w-24" /><B c="h-7 w-36" /></div><B c="h-8 w-24 rounded-full" /></div>
+        <B c="h-11 mt-4" />
+        <B c="h-44 mt-4 rounded-[28px]" />
+        <div className="grid grid-cols-2 gap-3 mt-3"><B c="h-28 rounded-[22px]" /><B c="h-28 rounded-[22px]" /><B c="h-28 rounded-[22px]" /><B c="h-28 rounded-[22px]" /></div>
+        <B c="h-24 mt-3 rounded-[22px]" />
       </div>
     );
   }
@@ -477,23 +628,31 @@
   }
 
   /* ============================================================ DASHBOARD */
-  function SummaryCard({ icon, label, value, sub, tone = 'slate', onClick }) {
+  function SummaryCard({ icon, label, value, amount, sub, tone = 'slate', onClick }) {
     const tones = {
-      slate: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
-      green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400',
-      red: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400',
-      violet: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400',
-      sky: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-400',
+      slate: 'from-slate-500/15 to-slate-500/5 text-slate-700 dark:text-slate-200',
+      green: 'from-emerald-500/20 to-emerald-500/5 text-emerald-700 dark:text-emerald-400',
+      red: 'from-rose-500/20 to-rose-500/5 text-rose-700 dark:text-rose-400',
+      violet: 'from-violet-500/20 to-violet-500/5 text-violet-700 dark:text-violet-400',
+      sky: 'from-sky-500/20 to-sky-500/5 text-sky-700 dark:text-sky-400',
     };
     return (
-      <Card className="p-4 text-left active:scale-[.98] transition-transform cursor-pointer" onClick={onClick} role="button" tabIndex={0}>
-        <div className={cls('w-9 h-9 rounded-xl grid place-items-center mb-3', tones[tone])}><Icon name={icon} size={18} /></div>
-        <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
-        <p className="num text-[22px] leading-7 font-bold tracking-tight mt-0.5 truncate">{value}</p>
+      <Card className="lift p-4 text-left cursor-pointer select-none" onClick={onClick} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onClick && onClick()} role="button" tabIndex={0}>
+        <div className={cls('w-9 h-9 rounded-[12px] grid place-items-center mb-3 bg-gradient-to-br', tones[tone])}><Icon name={icon} size={18} /></div>
+        <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{label}</p>
+        <p className="num text-[22px] leading-7 font-extrabold tracking-tight mt-0.5 truncate">{amount != null ? <AnimatedMoney value={amount} /> : value}</p>
         {sub && <p className="text-xs leading-snug text-slate-500 mt-1 whitespace-pre-line">{sub}</p>}
       </Card>
     );
   }
+
+  // Faint concentric rings behind the hero balance.
+  const HeroRings = () => (
+    <svg aria-hidden="true" className="absolute -right-24 -bottom-36 w-80 h-80 opacity-70 pointer-events-none" viewBox="0 0 200 200" fill="none">
+      {[30, 48, 66, 84, 98].map((r, i) => <circle key={r} cx="100" cy="100" r={r} stroke="url(#hr)" strokeWidth={i === 0 ? 1.4 : 1} opacity={1 - i * 0.16} />)}
+      <defs><linearGradient id="hr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#6ee7b7" /><stop offset="1" stopColor="#38bdf8" stopOpacity=".2" /></linearGradient></defs>
+    </svg>
+  );
 
   function Dashboard({ go }) {
     const { data, fmt, loadSample } = useApp();
@@ -509,7 +668,7 @@
         <header className="flex items-center justify-between pt-2">
           <div>
             <p className="text-sm text-slate-500">{monthLabel(s.mk)}</p>
-            <h1 className="text-2xl font-bold tracking-tight">{view === 'analytics' ? 'Analytics' : 'Overview'}</h1>
+            <h1 className="text-[28px] leading-9 font-extrabold tracking-tight">{view === 'analytics' ? 'Analytics' : 'Overview'}</h1>
           </div>
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
             <Icon name="ShieldCheck" size={14} /> On-device
@@ -529,45 +688,51 @@
           </Card>
         )}
 
-        <Card className="mt-4 p-4">
-          <div className="flex items-baseline justify-between">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Combined net balance</p>
-            <p className="text-[11px] text-slate-400">bank cash − card debt</p>
+        <section className="hero mt-4 p-5" aria-label="Combined net balance">
+          <HeroRings />
+          <div className="relative">
+            <div className="flex items-center justify-between">
+              <p className="text-[13px] font-semibold text-slate-300">Combined net balance</p>
+              <p className="text-[11px] text-slate-400">bank cash − card debt</p>
+            </div>
+            <p className={cls('num text-[40px] leading-[1.1] font-extrabold tracking-tight mt-2', s.netBalance < 0 ? 'text-rose-300' : 'text-white')}><AnimatedMoney value={s.netBalance} /></p>
+            {(s.bankBalance > 0 || s.cardOwed > 0) && (() => {
+              const bank = Math.max(0, s.bankBalance), owed = Math.max(0, s.cardOwed), tot = bank + owed || 1;
+              return <>
+                <div className="mt-4 h-2 rounded-full bg-white/10 overflow-hidden flex gap-0.5">
+                  <GrowBarRaw value={bank / tot} color="linear-gradient(90deg,#38bdf8,#0ea5e9)" />
+                  <GrowBarRaw value={owed / tot} color="linear-gradient(90deg,#fb7185,#f43f5e)" />
+                </div>
+                <div className="flex justify-between text-xs text-slate-300 mt-2.5">
+                  <span className="inline-flex items-center gap-1.5"><i className="w-2 h-2 rounded-full bg-sky-400 inline-block" />Bank <AnimatedMoney value={s.bankBalance} short className="font-semibold text-white" /></span>
+                  <span className="inline-flex items-center gap-1.5"><i className="w-2 h-2 rounded-full bg-rose-400 inline-block" />Cards <AnimatedMoney value={s.cardOwed} short className="font-semibold text-white" /></span>
+                </div>
+              </>;
+            })()}
+            {s.savings > 0 && <p className="text-xs text-slate-300 mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/[.07] px-2.5 py-1"><Icon name="PiggyBank" size={13} className="text-emerald-300" />Plus <AnimatedMoney value={s.savings} className="font-semibold text-white" /> set aside in savings funds</p>}
           </div>
-          <p className={cls('num text-3xl font-bold tracking-tight mt-0.5', s.netBalance < 0 && 'text-rose-600 dark:text-rose-400')}>{fmt(s.netBalance)}</p>
-          {(s.bankBalance > 0 || s.cardOwed > 0) && <>
-            <div className="mt-3 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
-              <div className="bg-sky-500" style={{ width: `${(Math.max(0, s.bankBalance) / (Math.max(0, s.bankBalance) + Math.max(0, s.cardOwed))) * 100}%` }} />
-              <div className="bg-rose-400" style={{ width: `${(Math.max(0, s.cardOwed) / (Math.max(0, s.bankBalance) + Math.max(0, s.cardOwed))) * 100}%` }} />
-            </div>
-            <div className="flex justify-between text-xs text-slate-500 mt-2">
-              <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-sky-500 inline-block" />Bank {fmt(s.bankBalance, true)}</span>
-              <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-rose-400 inline-block" />Cards {fmt(s.cardOwed, true)}</span>
-            </div>
-          </>}
-          {s.savings > 0 && <p className="text-xs text-slate-500 mt-2 inline-flex items-center gap-1"><Icon name="PiggyBank" size={13} className="text-emerald-600" />Plus {fmt(s.savings)} set aside in savings funds (counted in net worth).</p>}
-        </Card>
+        </section>
         <div className="grid grid-cols-2 gap-3 mt-3">
-          <SummaryCard icon="Landmark" tone="sky" label="Bank Balance" value={fmt(s.bankBalance)} sub={`Liquid cash · ${s.bankAccts.length} account${s.bankAccts.length === 1 ? '' : 's'}${s.bankAccts.some((a) => a.ledger && a.balanceSource === 'estimated') ? '\nincludes estimates' : ''}`} onClick={() => go('budget', 'assets')} />
-          <SummaryCard icon="CreditCard" tone="red" label="Credit Card Owed" value={fmt(s.cardOwed)} sub={`${s.cards.length} card${s.cards.length === 1 ? '' : 's'}${s.cards.some((c) => c.ledger && c.balanceSource === 'estimated') ? '\nincludes estimates' : ''}`} onClick={() => go('budget', 'debt')} />
+          <SummaryCard icon="Landmark" tone="sky" label="Bank Balance" amount={s.bankBalance} sub={`Liquid cash · ${s.bankAccts.length} account${s.bankAccts.length === 1 ? '' : 's'}${s.bankAccts.some((a) => a.ledger && a.balanceSource === 'estimated') ? '\nincludes estimates' : ''}`} onClick={() => go('budget', 'assets')} />
+          <SummaryCard icon="CreditCard" tone="red" label="Credit Card Owed" amount={s.cardOwed} sub={`${s.cards.length} card${s.cards.length === 1 ? '' : 's'}${s.cards.some((c) => c.ledger && c.balanceSource === 'estimated') ? '\nincludes estimates' : ''}`} onClick={() => go('budget', 'debt')} />
         </div>
 
         <div className="grid grid-cols-2 gap-3 mt-3">
-          <SummaryCard icon="Scale" label="Net Worth" value={fmt(s.netWorth)} sub={`${fmt(s.assets, true)} assets\n${fmt(s.liabilities, true)} debt`} onClick={() => go('budget', 'assets')} />
-          <SummaryCard icon="TrendingUp" tone="green" label="Monthly Income" value={fmt(s.income)} sub={(() => { const n = s.monthTx.filter((t) => t.type === 'income').length; return `${n} deposit${n === 1 ? '' : 's'}`; })()} onClick={() => go('transactions')} />
-          <SummaryCard icon="TrendingDown" tone="red" label="Monthly Expense" value={fmt(s.expense)} sub={savingsRate == null ? 'No income logged yet' : savingsRate < 0 ? 'More than income this month' : `Saving ${savingsRate}% of income`} onClick={() => go('transactions')} />
+          <SummaryCard icon="Scale" label="Net Worth" amount={s.netWorth} sub={`${fmt(s.assets, true)} assets\n${fmt(s.liabilities, true)} debt`} onClick={() => go('budget', 'assets')} />
+          <SummaryCard icon="TrendingUp" tone="green" label="Monthly Income" amount={s.income} sub={(() => { const n = s.monthTx.filter((t) => t.type === 'income').length; return `${n} deposit${n === 1 ? '' : 's'}`; })()} onClick={() => go('transactions')} />
+          <SummaryCard icon="TrendingDown" tone="red" label="Monthly Expense" amount={s.expense} sub={savingsRate == null ? 'No income logged yet' : savingsRate < 0 ? 'More than income this month' : `Saving ${savingsRate}% of income`} onClick={() => go('transactions')} />
           <SummaryCard icon="Repeat" tone="violet" label="Active Subscriptions" value={String(s.subs.length)} sub={`${fmt(s.subsMonthly)}/mo\n${fmt(s.subsMonthly * 12, true)}/yr`} onClick={() => go('budget', 'bills')} />
         </div>
 
         <Card className="mt-3 p-4">
           <div className="flex items-baseline justify-between">
             <p className="text-sm font-medium text-slate-500">Cash flow this month</p>
-            <p className={cls('num font-bold', s.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>{s.net >= 0 ? '+' : ''}{fmt(s.net)}</p>
+            <p className={cls('num font-bold', s.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>{s.net >= 0 ? '+' : ''}<AnimatedMoney value={s.net} /></p>
           </div>
-          <div className="mt-3 h-3 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
+          <div className="mt-3 h-3 rounded-full bg-slate-900/[.06] dark:bg-white/[.07] overflow-hidden flex gap-0.5">
             {(s.income + s.expense) > 0 && <>
-              <div className="bg-emerald-500" style={{ width: `${(s.income / (s.income + s.expense)) * 100}%` }} />
-              <div className="bg-rose-400" style={{ width: `${(s.expense / (s.income + s.expense)) * 100}%` }} />
+              <GrowBarRaw value={s.income / (s.income + s.expense)} color="linear-gradient(90deg,#34d399,#10b981)" />
+              <GrowBarRaw value={s.expense / (s.income + s.expense)} color="linear-gradient(90deg,#fda4af,#fb7185)" />
             </>}
           </div>
           <div className="flex justify-between text-xs text-slate-500 mt-2">
@@ -580,12 +745,12 @@
 
         <RecurringCard />
 
-        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'bills')}>All bills</button>}>Due soon</SectionTitle>
-        <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'bills')}>All bills</button>}>Due soon</SectionTitle>
+        <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06] rise-list">
           {s.upcoming.length === 0 ? <p className="p-4 text-sm text-slate-500">Nothing due in the next 14 days.</p> :
             s.upcoming.slice(0, 4).map((b) => (
               <div key={b.id} className="flex items-center gap-3 p-3.5">
-                <div className={cls('w-10 h-10 rounded-xl grid place-items-center', b.st.daysLeft <= 2 ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500')}>
+                <div className={cls('w-10 h-10 rounded-xl grid place-items-center', b.st.daysLeft <= 2 ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-slate-900/[.05] dark:bg-white/[.07] text-slate-500')}>
                   <Icon name={b.isSubscription ? 'Repeat' : 'Receipt'} size={18} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -601,8 +766,8 @@
 
         <MonthlyReportCard />
 
-        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('transactions')}>See all</button>}>Recent</SectionTitle>
-        <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('transactions')}>See all</button>}>Recent</SectionTitle>
+        <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06] rise-list">
           {recent.length === 0 ? <p className="p-4 text-sm text-slate-500">No transactions yet.</p> : recent.map((t) => <TxRow key={t.id} t={t} />)}
         </Card>
         </>}
@@ -636,9 +801,9 @@
     return (
       <>
         <SectionTitle action={<div className="flex items-center gap-1">
-          <button className="w-7 h-7 grid place-items-center rounded-lg text-slate-500" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" size={16} /></button>
+          <button className="press w-7 h-7 grid place-items-center rounded-lg text-slate-500" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" size={16} /></button>
           <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 w-[72px] text-center">{monthLabel(month, { month: 'short', year: 'numeric' })}</span>
-          <button className="w-7 h-7 grid place-items-center rounded-lg text-slate-500" onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" size={16} /></button>
+          <button className="press w-7 h-7 grid place-items-center rounded-lg text-slate-500" onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" size={16} /></button>
         </div>}>Spending by account</SectionTitle>
         <Card className="p-4">
           <Segmented value={view} onChange={setView} options={ACCOUNT_FILTERS} />
@@ -653,7 +818,7 @@
               rows.slice(0, 8).map((c) => (
                 <div key={c.cat}>
                   <div className="flex justify-between text-sm mb-1"><span>{c.cat}</span><span className="num font-medium">{fmt(val(c))}</span></div>
-                  <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
+                  <div className="h-2 rounded-full bg-slate-900/[.05] dark:bg-white/[.07] overflow-hidden flex">
                     {(view === 'all' ? ['credit', 'bank', 'cash', 'other'] : [view]).map((k) => c[k] > 0 && <div key={k} className={SEG_COLOR[k]} style={{ width: `${(c[k] / max) * 100}%` }} />)}
                   </div>
                   {view === 'all' && c.credit > 0 && c.bank > 0 && <p className="num text-[11px] text-slate-500 mt-1">Cards {fmt(c.credit)} · Bank {fmt(c.bank)}</p>}
@@ -708,11 +873,11 @@
           </>}
           {item.status === 'kept' && <>
             <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1 mr-auto"><Icon name="CircleCheck" size={14} />Kept{item.billId ? ' · in Bills' : ''}</span>
-            <button className="text-xs font-semibold text-rose-600 dark:text-rose-400" disabled={busy} onClick={() => act('cancel')}>Mark as Cancelled</button>
+            <button className="press text-xs font-semibold text-rose-600 dark:text-rose-400" disabled={busy} onClick={() => act('cancel')}>Mark as Cancelled</button>
           </>}
           {cancelled && <>
             <span className="text-xs font-semibold text-slate-500 mr-auto">Saves {fmt(item.annualCost)}/yr</span>
-            <button className="text-xs font-semibold text-brand-700 dark:text-brand-400" disabled={busy} onClick={() => act('undo')}>Undo</button>
+            <button className="press text-xs font-semibold text-brand-700 dark:text-brand-400" disabled={busy} onClick={() => act('undo')}>Undo</button>
           </>}
         </div>
       </div>
@@ -731,7 +896,7 @@
 
     return (
       <>
-        <SectionTitle action={items.length > 0 && <button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setOpen(true)}>See all ({items.length})</button>}>Subscriptions & bills</SectionTitle>
+        <SectionTitle action={items.length > 0 && <button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setOpen(true)}>See all ({items.length})</button>}>Subscriptions & bills</SectionTitle>
         <Card className="overflow-hidden">
           <div className="p-4 border-b border-slate-100 dark:border-slate-800">
             <div className="flex items-baseline justify-between">
@@ -744,13 +909,13 @@
             </p>
           </div>
           {items.length === 0 ? (
-            <p className="p-4 text-sm text-slate-500">No repeating charges found yet. Import a couple of months of statements and subscriptions will show up here. <button className="font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('upload')}>Import</button></p>
+            <p className="p-4 text-sm text-slate-500">No repeating charges found yet. Import a couple of months of statements and subscriptions will show up here. <button className="press font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('upload')}>Import</button></p>
           ) : preview.length === 0 ? (
             <p className="p-4 text-sm text-slate-500 flex items-center gap-2"><Icon name="CircleCheck" size={16} className="text-emerald-600" />All recurring charges reviewed.</p>
           ) : (
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">{preview.map((i) => <RecurringRow key={i.key} item={i} />)}</div>
+            <div className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">{preview.map((i) => <RecurringRow key={i.key} item={i} />)}</div>
           )}
-          {review.length > preview.length && <button className="w-full p-3 text-sm font-semibold text-brand-700 dark:text-brand-400 border-t border-slate-100 dark:border-slate-800" onClick={() => setOpen(true)}>Review {review.length - preview.length} more</button>}
+          {review.length > preview.length && <button className="press w-full p-3 text-sm font-semibold text-brand-700 dark:text-brand-400 border-t border-slate-100 dark:border-slate-800" onClick={() => setOpen(true)}>Review {review.length - preview.length} more</button>}
         </Card>
 
         <Sheet open={open} title="Subscriptions & bills" onClose={() => setOpen(false)}>
@@ -758,7 +923,7 @@
           {[['Needs review', review], ['Kept', kept], ['Cancelled', cancelled]].filter(([, l]) => l.length).map(([title, list]) => (
             <div key={title}>
               <SectionTitle>{title} · {list.length}</SectionTitle>
-              <Card className="divide-y divide-slate-100 dark:divide-slate-800">{list.map((i) => <RecurringRow key={i.key} item={i} />)}</Card>
+              <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">{list.map((i) => <RecurringRow key={i.key} item={i} />)}</Card>
             </div>
           ))}
         </Sheet>
@@ -775,7 +940,7 @@
       : transfer ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
       : card ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' : cash ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
     return (
-      <button onClick={onClick} className="w-full flex items-center gap-3 p-3.5 text-left active:bg-slate-50 dark:active:bg-slate-800/50">
+      <button onClick={onClick} className="press w-full flex items-center gap-3 p-3.5 text-left active:bg-slate-50 dark:active:bg-slate-800/50">
         <div className={cls('w-10 h-10 rounded-xl grid place-items-center shrink-0', tone)}><Icon name={icon} size={18} /></div>
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{t.description || t.category}</p>
@@ -856,17 +1021,17 @@
     return (
       <div>
         <header className="flex items-center justify-between pt-2">
-          <h1 className="text-2xl font-bold tracking-tight">Transactions</h1>
+          <h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Transactions</h1>
           <Button className="!h-10 !px-3" onClick={() => setEditing('new')} aria-label="Add transaction"><Icon name="Plus" size={18} />Add</Button>
         </header>
 
         <div className="flex items-center justify-between mt-4">
-          <button className="w-10 h-10 grid place-items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" /></button>
+          <button className="press w-10 h-10 grid place-items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" /></button>
           <div className="text-center">
             <p className="font-semibold">{monthLabel(month)}</p>
             <p className="num text-xs text-slate-500"><span className="text-emerald-600 dark:text-emerald-400">+{fmt(totIn, true)}</span> · −{fmt(totOut, true)}{list.some((t) => t.type === 'transfer') ? ' · transfers excluded' : ''}</p>
           </div>
-          <button className="w-10 h-10 grid place-items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" /></button>
+          <button className="press w-10 h-10 grid place-items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" /></button>
         </div>
 
         <div className="relative mt-3">
@@ -874,14 +1039,14 @@
           <input className={cls(inputCls, 'pl-10')} placeholder="Search description, category or account" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div className="mt-3"><Segmented value={acct} onChange={setAcct} options={ACCOUNT_FILTERS} /></div>
-        <button onClick={() => setLogOnly(!logOnly)} className={cls('mt-2 text-xs font-semibold px-3 py-1.5 rounded-full border inline-flex items-center gap-1.5', logOnly ? 'border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300' : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300')}><Icon name="Banknote" size={14} />Cash & transfer log only</button>
+        <button onClick={() => setLogOnly(!logOnly)} className={cls('press mt-2 text-xs font-semibold px-3 py-1.5 rounded-full border inline-flex items-center gap-1.5', logOnly ? 'border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300' : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300')}><Icon name="Banknote" size={14} />Cash & transfer log only</button>
         <div className="mt-2"><Segmented value={type} onChange={setType} options={[{ value: 'all', label: 'All types' }, { value: 'expense', label: acct === 'credit' ? 'Charges' : 'Expenses' }, { value: 'income', label: 'Income' }, { value: 'transfer', label: acct === 'credit' ? 'Payments' : 'Transfers' }]} /></div>
 
         {list.length === 0 ? <Empty icon="Receipt" title="No transactions" body="Nothing matches this month and filter." action={<Button variant="secondary" onClick={() => setEditing('new')}>Add one</Button>} /> :
           Object.entries(groups).map(([date, items]) => (
             <div key={date}>
               <SectionTitle>{prettyDate(date)}</SectionTitle>
-              <Card className="divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+              <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06] overflow-hidden rise-list">
                 {items.map((t) => <TxRow key={t.id} t={t} onClick={() => setEditing(t)} />)}
               </Card>
             </div>
@@ -998,7 +1163,7 @@
     return (
       <div>
         <header className="pt-2">
-          <h1 className="text-2xl font-bold tracking-tight">Upload</h1>
+          <h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Upload</h1>
           <p className="text-sm text-slate-500 mt-1">PDF or CSV statements, read on this device and never uploaded anywhere.</p>
         </header>
 
@@ -1008,7 +1173,7 @@
             const sel = kind === k, ki = KIND_INFO[k];
             return (
               <button key={k} role="radio" aria-checked={sel} onClick={() => { setKind(k); setName(''); }}
-                className={cls('rounded-2xl border-2 p-3.5 text-left transition-colors', sel ? (k === 'bank' ? 'border-sky-500 bg-sky-50 dark:bg-sky-500/10' : 'border-violet-500 bg-violet-50 dark:bg-violet-500/10') : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900')}>
+                className={cls('press rounded-[20px] border-2 p-3.5 text-left transition-all duration-300 ease-in-out', sel ? (k === 'bank' ? 'border-sky-500 bg-sky-50 dark:bg-sky-500/10' : 'border-violet-500 bg-violet-50 dark:bg-violet-500/10') : 'border-transparent card')}>
                 <div className={cls('w-9 h-9 rounded-xl grid place-items-center mb-2', k === 'bank' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300' : 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300')}><Icon name={ki.icon} size={18} /></div>
                 <p className="font-semibold leading-tight">{ki.title}</p>
                 <p className="text-xs text-slate-500 mt-0.5">{ki.sub}</p>
@@ -1025,7 +1190,7 @@
             <datalist id={`acct-${kind}`}>{existing.map((a) => <option key={a.id} value={a.name} />)}</datalist>
           </Field>
           {existing.length > 0 && <div className="flex flex-wrap gap-1.5">{existing.map((a) => (
-            <button key={a.id} onClick={() => setName(a.name)} className={cls('text-xs font-medium px-2.5 py-1 rounded-full border', sameName(a.name, accountName) ? 'border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300')}>{a.name}</button>
+            <button key={a.id} onClick={() => setName(a.name)} className={cls('press text-xs font-medium px-2.5 py-1 rounded-full border', sameName(a.name, accountName) ? 'border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300')}>{a.name}</button>
           ))}</div>}
           {kind === 'bank' && !known && <Field label="Account type"><Select options={['Checking', 'Savings']} value={subtype} onChange={(e) => setSubtype(e.target.value)} /></Field>}
         </Card>
@@ -1034,7 +1199,7 @@
         <input ref={fileRef} type="file" accept=".pdf,.csv,.tsv,.txt,.json,application/pdf,text/csv,application/json" className="hidden" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ''; }} />
         <button onClick={() => fileRef.current.click()} disabled={busy}
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
-          className="w-full rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-7 text-center active:bg-slate-50 dark:active:bg-slate-800">
+          className="press w-full rounded-[24px] border-2 border-dashed border-brand-500/35 bg-white/60 dark:bg-white/[.03] p-7 text-center active:bg-brand-500/5">
           <div className="mx-auto w-12 h-12 rounded-2xl grid place-items-center bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400"><Icon name={busy ? 'Hourglass' : 'FileSpreadsheet'} size={24} /></div>
           <p className="font-semibold mt-3">{busy ? 'Reading statement…' : job ? job.file.name : `Choose a ${kind === 'bank' ? 'bank' : 'credit card'} statement`}</p>
           <p className="text-xs text-slate-500 mt-1">PDF · CSV · or a Centric Wealth backup (.json)</p>
@@ -1070,14 +1235,14 @@
               </div>
               <p className="text-xs text-slate-500 mt-3">{preview.fresh.length} new · {preview.rows.length - preview.fresh.length} already imported{job.report.warnings.length ? ` · ${job.report.warnings.length} row${job.report.warnings.length === 1 ? '' : 's'} skipped` : ''} · {parseISO(job.report.meta.dateRange[0]).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – {parseISO(job.report.meta.dateRange[1]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</p>
             </Card>
-            <Card className="mt-3 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+            <Card className="mt-3 divide-y divide-slate-900/[.05] dark:divide-white/[.06] overflow-hidden">
               {preview.rows.slice(0, 8).map((t, i) => <div key={i} className={cls(t.dup && 'opacity-40')}><TxRow t={t} /></div>)}
               {preview.rows.length > 8 && <p className="p-3 text-xs text-center text-slate-500">+ {preview.rows.length - 8} more</p>}
             </Card>
             {job.report.warnings.length > 0 && (
-              <details className="mt-2 text-xs text-slate-500 px-1"><summary className="cursor-pointer">Skipped rows</summary>
+              <Disclosure className="mt-2 text-xs text-slate-500 px-1" summary="Skipped rows">
                 <ul className="mt-1 space-y-0.5">{job.report.warnings.slice(0, 20).map((w, i) => <li key={i}>{w.row ? `Row ${w.row}: ` : w.page ? `Page ${w.page}: ` : ''}{w.message}</li>)}</ul>
-              </details>
+              </Disclosure>
             )}
             <div className="flex gap-2 mt-4">
               <Button variant="secondary" className="flex-1" onClick={() => setJob(null)}>Cancel</Button>
@@ -1090,7 +1255,7 @@
           <Card className="mt-3 p-4 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20">
             <p className="font-semibold flex items-center gap-2"><Icon name="CircleCheck" size={18} className="text-emerald-600" />Imported {result.inserted} into {result.accountName}</p>
             {result.skippedDuplicates > 0 && <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{result.skippedDuplicates} already imported, skipped.</p>}
-            {result.needsApr && <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">Add this card’s APR and minimum payment so payoff plans are accurate. <button className="font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Open Debt</button></p>}
+            {result.needsApr && <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">Add this card’s APR and minimum payment so payoff plans are accurate. <button className="press font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Open Debt</button></p>}
           </Card>
         )}
 
@@ -1122,16 +1287,16 @@
       <div>
         <Card className="p-4 mt-4">
           <div className="flex justify-between items-baseline"><p className="text-sm text-slate-500">Spent of budget · {monthLabel(s.mk, { month: 'long' })}</p><p className="num text-sm font-semibold">{totalLimit ? Math.round((totalSpent / totalLimit) * 100) : 0}%</p></div>
-          <p className="num text-2xl font-bold mt-1">{fmt(totalSpent)} <span className="text-base font-medium text-slate-500">/ {fmt(totalLimit)}</span></p>
+          <p className="num text-2xl font-extrabold tracking-tight mt-1"><AnimatedMoney value={totalSpent} /> <span className="text-base font-medium text-slate-500">/ {fmt(totalLimit)}</span></p>
           <div className="mt-3"><Progress value={totalLimit ? totalSpent / totalLimit : 0} /></div>
         </Card>
-        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ category: unbudgeted[0] || 'Other', limit: '' , isNew: true })}>+ Add</button>}>Categories</SectionTitle>
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ category: unbudgeted[0] || 'Other', limit: '' , isNew: true })}>+ Add</button>}>Categories</SectionTitle>
         {data.budgets.length === 0 ? <Card><Empty icon="PiggyBank" title="No budgets yet" body="Set a monthly limit per category." /></Card> :
-          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+          <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
             {[...data.budgets].sort((a, b) => (spent[b.category] || 0) / b.limit - (spent[a.category] || 0) / a.limit).map((b) => {
               const sp = spent[b.category] || 0; const left = b.limit - sp;
               return (
-                <button key={b.category} className="w-full text-left p-4" onClick={() => setEdit({ ...b, limit: String(b.limit) })}>
+                <button key={b.category} className="press w-full text-left p-4" onClick={() => setEdit({ ...b, limit: String(b.limit) })}>
                   <div className="flex justify-between text-sm mb-2"><span className="font-medium">{b.category}</span><span className={cls('num', left < 0 ? 'text-rose-600 font-semibold' : 'text-slate-500')}>{left < 0 ? `${fmt(-left)} over` : `${fmt(left)} left`}</span></div>
                   <Progress value={sp / b.limit} />
                   <p className="num text-xs text-slate-500 mt-1.5">{fmt(sp)} of {fmt(b.limit)}</p>
@@ -1185,20 +1350,20 @@
       <div>
         <Card className="p-4 mt-4">
           <p className="text-sm text-slate-500">Total debt</p>
-          <p className="num text-2xl font-bold">{fmt(total)}</p>
+          <p className="num text-2xl font-extrabold tracking-tight"><AnimatedMoney value={total} /></p>
           <p className="num text-xs text-slate-500 mt-1">{fmt(minTotal)}/mo in minimum payments</p>
         </Card>
 
-        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', type: 'Credit Card', balance: '', apr: '', minPayment: '' })}>+ Add</button>}>Accounts</SectionTitle>
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', type: 'Credit Card', balance: '', apr: '', minPayment: '' })}>+ Add</button>}>Accounts</SectionTitle>
         {data.debts.length === 0 ? <Card><Empty icon="CreditCard" title="No debts tracked" body="Add cards and loans to plan your payoff." /></Card> :
-          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+          <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
             {data.debts.map((d) => (
               <div key={d.id} className="flex items-center gap-3 p-3.5">
-                <button className="flex-1 min-w-0 text-left flex items-center gap-3" onClick={() => setEdit({ ...d, balance: String(d.balance), apr: String(d.apr), minPayment: String(d.minPayment) })}>
+                <button className="press flex-1 min-w-0 text-left flex items-center gap-3" onClick={() => setEdit({ ...d, balance: String(d.balance), apr: String(d.apr), minPayment: String(d.minPayment) })}>
                   <div className="w-10 h-10 rounded-xl grid place-items-center bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400"><Icon name="CreditCard" size={18} /></div>
                   <div className="min-w-0"><p className="font-medium truncate">{d.name}</p><p className="num text-xs text-slate-500">{Number(d.apr) > 0 ? `${d.apr}% APR` : <span className="text-amber-600">APR not set</span>} · min {fmt(d.minPayment)}</p>{d.ledger && <p className="text-[11px] text-slate-400">{balanceNote(d)}</p>}</div>
                 </button>
-                <div className="text-right"><p className="num font-semibold">{fmt(d.balance)}</p><button className="text-xs font-semibold text-brand-700 dark:text-brand-400" onClick={() => setPay({ id: d.id, name: d.name, amount: String(d.minPayment || '') })}>Log payment</button></div>
+                <div className="text-right"><p className="num font-semibold">{fmt(d.balance)}</p><button className="press text-xs font-semibold text-brand-700 dark:text-brand-400" onClick={() => setPay({ id: d.id, name: d.name, amount: String(d.minPayment || '') })}>Log payment</button></div>
               </div>
             ))}
           </Card>}
@@ -1269,17 +1434,17 @@
       <div>
         <Card className="p-4 mt-4">
           <p className="text-sm text-slate-500">Recurring bills</p>
-          <p className="num text-2xl font-bold">{fmt(monthlyTotal)}<span className="text-base font-medium text-slate-500">/mo</span></p>
+          <p className="num text-2xl font-extrabold tracking-tight"><AnimatedMoney value={monthlyTotal} /><span className="text-base font-medium text-slate-500">/mo</span></p>
           <p className="text-xs text-slate-500 mt-1">{data.settings.notify ? 'Reminders on' : 'Turn on reminders in Settings'} · charges found in imports mark bills as paid.</p>
         </Card>
-        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', amount: '', dueDay: new Date().getDate(), dueMonth: new Date().getMonth() + 1, frequency: 'monthly', isSubscription: false, category: 'Utilities', active: true })}>+ Add</button>}>Bills & subscriptions</SectionTitle>
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', amount: '', dueDay: new Date().getDate(), dueMonth: new Date().getMonth() + 1, frequency: 'monthly', isSubscription: false, category: 'Utilities', active: true })}>+ Add</button>}>Bills & subscriptions</SectionTitle>
         {bills.length === 0 ? <Card><Empty icon="Bell" title="No bills yet" body="Add rent, utilities and subscriptions to get due-date reminders." /></Card> :
-          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+          <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
             {bills.map((b) => {
               const overdue = !b.st.paid && b.st.daysLeft < 0; const soon = !b.st.paid && b.st.daysLeft <= 3;
               return (
                 <div key={b.id} className={cls('flex items-center gap-3 p-3.5', b.active === false && 'opacity-50')}>
-                  <button className="flex-1 min-w-0 text-left" onClick={() => { const { st, ...rest } = b; setEdit({ ...rest, amount: String(b.amount) }); }}>
+                  <button className="press flex-1 min-w-0 text-left" onClick={() => { const { st, ...rest } = b; setEdit({ ...rest, amount: String(b.amount) }); }}>
                     <p className="font-medium truncate flex items-center gap-1.5">{b.name}{b.isSubscription && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">Sub</span>}</p>
                     <p className={cls('text-xs', overdue ? 'text-rose-600 font-semibold' : soon ? 'text-amber-600 font-medium' : 'text-slate-500')}>
                       {b.st.paid ? `Paid · next ${prettyDate(b.st.nextDue)}` : overdue ? `${-b.st.daysLeft}d overdue` : `Due ${prettyDate(b.st.currentDue)}`} · {b.frequency}
@@ -1287,7 +1452,7 @@
                   </button>
                   <p className="num font-semibold">{fmt(b.amount)}</p>
                   <button onClick={() => !b.st.paid && markPaid(b)} disabled={b.st.paid || b.active === false} aria-label={b.st.paid ? 'Paid' : 'Mark paid'}
-                    className={cls('w-9 h-9 rounded-full grid place-items-center border', b.st.paid ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 dark:border-slate-600 text-slate-400')}>
+                    className={cls('press w-9 h-9 rounded-full grid place-items-center border', b.st.paid ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 dark:border-slate-600 text-slate-400')}>
                     <Icon name="Check" size={16} strokeWidth={3} />
                   </button>
                 </div>
@@ -1330,15 +1495,15 @@
         </div>
         <Card className="p-4 mt-3">
           <p className="text-sm text-slate-500">Net worth</p>
-          <p className="num text-2xl font-bold">{fmt(s.netWorth)}</p>
+          <p className="num text-2xl font-extrabold tracking-tight"><AnimatedMoney value={s.netWorth} /></p>
           <p className="num text-xs text-slate-500 mt-1">{fmt(s.assets)} assets − {fmt(s.liabilities)} debts</p>
         </Card>
-        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', type: 'Checking', balance: '' })}>+ Add</button>}>Assets</SectionTitle>
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', type: 'Checking', balance: '' })}>+ Add</button>}>Assets</SectionTitle>
         {data.accounts.length === 0 ? <Card><Empty icon="Wallet" title="No assets yet" body="Add bank balances, savings and investments to track net worth." /></Card> :
-          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+          <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
             {data.accounts.map((a) => (
-              <button key={a.id} className="w-full flex items-center gap-3 p-3.5 text-left" onClick={() => setEdit({ ...a, balance: String(a.balance) })}>
-                <div className={cls('w-10 h-10 rounded-xl grid place-items-center', isBankAccount(a) ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300')}><Icon name={isBankAccount(a) ? 'Landmark' : 'Wallet'} size={18} /></div>
+              <button key={a.id} className="press w-full flex items-center gap-3 p-3.5 text-left" onClick={() => setEdit({ ...a, balance: String(a.balance) })}>
+                <div className={cls('w-10 h-10 rounded-xl grid place-items-center', isBankAccount(a) ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' : 'bg-slate-900/[.05] dark:bg-white/[.07] text-slate-600 dark:text-slate-300')}><Icon name={isBankAccount(a) ? 'Landmark' : 'Wallet'} size={18} /></div>
                 <div className="flex-1 min-w-0"><p className="font-medium truncate">{a.name}</p><p className="text-xs text-slate-500">{a.type}{a.ledger ? ` · ${balanceNote(a)}` : ''}</p></div>
                 <p className="num font-semibold">{fmt(a.balance)}</p>
               </button>
@@ -1364,7 +1529,7 @@
   function BudgetDebt({ sub, setSub }) {
     return (
       <div>
-        <header className="pt-2"><h1 className="text-2xl font-bold tracking-tight">Budget & Debt</h1></header>
+        <header className="pt-2"><h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Budget & Debt</h1></header>
         <div className="mt-4"><Segmented value={sub} onChange={setSub} options={[{ value: 'budget', label: 'Budget' }, { value: 'debt', label: 'Debt' }, { value: 'bills', label: 'Bills' }, { value: 'assets', label: 'Assets' }]} /></div>
         {sub === 'budget' && <BudgetTab />}
         {sub === 'debt' && <DebtTab />}
@@ -1380,7 +1545,7 @@
   const fmtPct = (v, d = 0) => (v == null || !isFinite(v) ? '-' : `${(v * 100).toFixed(d)}%`);
   const monthsText = (m) => (m == null ? 'never' : m < 12 ? `${m} mo` : `${Math.floor(m / 12)} yr${m >= 24 ? 's' : ''}${m % 12 ? ` ${m % 12} mo` : ''}`);
 
-  function Bar({ value, className = 'bg-brand-500', track = 'bg-slate-100 dark:bg-slate-800', h = 'h-2' }) {
+  function Bar({ value, className = 'bg-brand-500', track = 'bg-slate-900/[.05] dark:bg-white/[.07]', h = 'h-2' }) {
     return <div className={cls(h, 'rounded-full overflow-hidden', track)}><div className={cls('h-full rounded-full transition-all', className)} style={{ width: `${clamp01(value) * 100}%` }} /></div>;
   }
   const clamp01 = (v) => Math.min(1, Math.max(0, Number(v) || 0));
@@ -1418,7 +1583,7 @@
     return (
       <div>
         <header className="pt-2">
-          <h1 className="text-2xl font-bold tracking-tight">Budget & Health Advisor</h1>
+          <h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Budget & Health Advisor</h1>
           <p className="text-sm text-slate-500 mt-0.5">{periodLabel}</p>
         </header>
 
@@ -1462,7 +1627,7 @@
             {m.income > 0 && (() => {
               const fx = m.fixedExpenses / m.income, vr = m.variableExpenses / m.income, sv = Math.max(0, m.leftOver) / m.income;
               return (<>
-                <div className="mt-4 h-3 rounded-full overflow-hidden flex bg-slate-100 dark:bg-slate-800">
+                <div className="mt-4 h-3 rounded-full overflow-hidden flex bg-slate-900/[.05] dark:bg-white/[.07]">
                   <div className="bg-sky-500" style={{ width: `${clamp01(fx) * 100}%` }} />
                   <div className="bg-amber-400" style={{ width: `${clamp01(Math.min(vr, 1 - clamp01(fx))) * 100}%` }} />
                   <div className="bg-emerald-500" style={{ width: `${clamp01(sv) * 100}%` }} />
@@ -1507,7 +1672,7 @@
         </>}
 
         {/* ---- Debt paydown ---- */}
-        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Edit debts</button>}>Debt paydown</SectionTitle>
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Edit debts</button>}>Debt paydown</SectionTitle>
         {data.debts.filter((x) => x.balance > 0).length === 0 ? (
           <Card><Empty icon="CreditCard" title="No debts tracked" body="Add your cards and loans to compare payoff plans." action={<Button variant="secondary" onClick={() => go('budget', 'debt')}>Add a debt</Button>} /></Card>
         ) : (
@@ -1525,7 +1690,7 @@
               {['avalanche', 'snowball'].map((k) => {
                 const p = d[k]; const sel = shown === k;
                 return (
-                  <button key={k} onClick={() => setStrategy(k)} className={cls('text-left rounded-xl border-2 p-3 transition-colors', sel ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 dark:border-slate-700')}>
+                  <button key={k} onClick={() => setStrategy(k)} className={cls('press text-left rounded-xl border-2 p-3 transition-all duration-300 ease-in-out', sel ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-500/10' : 'border-slate-200 dark:border-slate-700')}>
                     <div className="flex items-center justify-between"><p className="font-semibold capitalize">{k}</p>{d.recommended === k && <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-brand-600 text-white">Best</span>}</div>
                     <p className="text-[11px] text-slate-500">{k === 'avalanche' ? 'Highest APR first' : 'Smallest balance first'}</p>
                     {p.feasible ? <>
@@ -1561,7 +1726,7 @@
         {/* ---- Recommendations ---- */}
         {recs.length > 0 && <>
           <SectionTitle>Next steps</SectionTitle>
-          <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+          <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
             {recs.map((r) => (
               <div key={r.id} className="flex gap-3 p-3.5">
                 <div className={cls('w-8 h-8 rounded-lg grid place-items-center shrink-0', r.severity === 'high' ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15' : r.severity === 'medium' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15')}>
@@ -1595,10 +1760,16 @@
   }
   function AnimatedMoney({ value, className, short }) { const { fmt } = useApp(); const v = useAnimatedNumber(Number(value) || 0); return <span className={cls('num', className)}>{fmt(v, short)}</span>; }
   // Width grows from 0 on first paint, then animates on every change.
-  function GrowBar({ value, color, h = 'h-2.5', track = 'bg-slate-100 dark:bg-slate-800', children }) {
+  function GrowBar({ value, color, h = 'h-2.5', track = 'bg-slate-900/[.06] dark:bg-white/[.07]', liquid, children }) {
     const [w, setW] = useState(0);
     useEffect(() => { const id = requestAnimationFrame(() => setW(Math.max(0, Math.min(1, value || 0)))); return () => cancelAnimationFrame(id); }, [value]);
-    return <div className={cls('relative rounded-full overflow-hidden', h, track)}><div className="grow-bar h-full rounded-full" style={{ width: `${w * 100}%`, background: color }} />{children}</div>;
+    return <div className={cls('relative rounded-full overflow-hidden', h, track)}><div className={cls('grow-bar h-full rounded-full', liquid && 'liquid')} style={{ width: `${w * 100}%`, background: color }} />{children}</div>;
+  }
+  // A segment inside a flex track that grows from 0 to its share.
+  function GrowBarRaw({ value, color }) {
+    const [w, setW] = useState(0);
+    useEffect(() => { const id = requestAnimationFrame(() => setW(Math.max(0, Math.min(1, value || 0)))); return () => cancelAnimationFrame(id); }, [value]);
+    return <div className="grow-bar h-full rounded-full shrink-0" style={{ width: `${w * 100}%`, background: color }} />;
   }
   // Circular "liquid fill" gauge: the water level rises to the percentage, with moving waves.
   function LiquidGauge({ pct, size = 128, color = '#10b981', label = 'funded' }) {
@@ -1650,7 +1821,7 @@
     useEffect(() => () => { if (chart.current) chart.current.destroy(); }, []);
     return (
       <div className="relative" style={{ height }}>
-        {st === 'loading' && <div className="absolute inset-0 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />}
+        {st === 'loading' && <div className="absolute inset-0 skeleton" />}
         {st === 'error' && <p className="absolute inset-0 grid place-items-center text-sm text-slate-500 text-center px-6">{err}</p>}
         <canvas ref={ref} role="img" aria-label={label} />
       </div>
@@ -1659,10 +1830,10 @@
   // "Show numbers" table under each chart (accessibility + exact values).
   function NumbersTable({ head, rows }) {
     return (
-      <details className="mt-2 text-xs"><summary className="cursor-pointer text-slate-500 font-medium">Show numbers</summary>
+      <Disclosure className="mt-2 text-xs" summary="Show numbers">
         <div className="overflow-x-auto mt-2"><table className="w-full num"><thead><tr>{head.map((h, i) => <th key={i} className={cls('py-1 px-1.5 font-semibold text-slate-500 border-b border-slate-200 dark:border-slate-700', i ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
           <tbody>{rows.map((r, i) => <tr key={i} className="border-b border-slate-100 dark:border-slate-800">{r.map((c, j) => <td key={j} className={cls('py-1 px-1.5', j ? 'text-right' : 'text-left')}>{c}</td>)}</tr>)}</tbody></table></div>
-      </details>
+      </Disclosure>
     );
   }
   const STATUS = { good: { color: '#0ca30c', icon: 'CircleCheck' }, warning: { color: '#fab219', icon: 'TriangleAlert' }, serious: { color: '#ec835a', icon: 'TriangleAlert' }, critical: { color: '#d03b3b', icon: 'CircleAlert' } };
@@ -1721,16 +1892,16 @@
         <SectionTitle>Income vs. expenses</SectionTitle>
         <Card className="p-4">
           <div className="flex gap-4 text-sm mb-2">
-            <div><p className="text-xs text-slate-500">Income</p><p className="num font-bold">{fmt(totals.income, true)}</p></div>
-            <div><p className="text-xs text-slate-500">Expenses</p><p className="num font-bold">{fmt(totals.expense, true)}</p></div>
-            <div><p className="text-xs text-slate-500">Net</p><p className={cls('num font-bold', totals.income - totals.expense < 0 && 'text-rose-600 dark:text-rose-400')}>{fmt(totals.income - totals.expense, true)}</p></div>
+            <div><p className="text-xs text-slate-500">Income</p><p className="num font-bold"><AnimatedMoney value={totals.income} short /></p></div>
+            <div><p className="text-xs text-slate-500">Expenses</p><p className="num font-bold"><AnimatedMoney value={totals.expense} short /></p></div>
+            <div><p className="text-xs text-slate-500">Net</p><p className={cls('num font-bold', totals.income - totals.expense < 0 && 'text-rose-600 dark:text-rose-400')}><AnimatedMoney value={totals.income - totals.expense} short /></p></div>
           </div>
           <ChartBox height={240} label="Monthly income versus expenses, expenses stacked by credit, bank and cash" dataKey={JSON.stringify(series)} build={(th, f) => Analytics.charts.incomeExpense(series, th, f)} />
           <NumbersTable head={['Month', 'Income', 'Cards', 'Bank', 'Cash', 'Total out']} rows={series.map((m) => [m.label, fmt(m.income), fmt(m.credit), fmt(m.bank), fmt(m.cash), fmt(m.expense)])} />
         </Card>
 
         {/* Credit cards */}
-        <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Cards</button>}>Credit cards</SectionTitle>
+        <SectionTitle action={<button className="press text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Cards</button>}>Credit cards</SectionTitle>
         <Card className="p-4">
           {cc.cards.length === 0 ? <Empty icon="CreditCard" title="No credit cards yet" body="Import a credit card statement to see spending, utilization and debt." /> : <>
             <Segmented value={ccView} onChange={setCcView} options={[{ value: 'spending', label: 'Spending' }, { value: 'utilization', label: 'Utilization' }, { value: 'debt', label: 'Debt' }]} />
@@ -1745,7 +1916,7 @@
                 {cc.cards.map((c) => (
                   <div key={c.id || c.name}>
                     <div className="flex items-baseline justify-between text-sm"><span className="font-medium">{c.name}</span>
-                      {c.limit ? <span className="num text-slate-500">{fmt(c.balance)} of {fmt(c.limit, true)}</span> : <button className="text-xs font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Add credit limit</button>}</div>
+                      {c.limit ? <span className="num text-slate-500">{fmt(c.balance)} of {fmt(c.limit, true)}</span> : <button className="press text-xs font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Add credit limit</button>}</div>
                     {c.limit ? <>
                       <div className="mt-1.5"><GrowBar value={c.utilization} color={STATUS[utilLevel(c.utilization)].color}><span className="absolute top-0 bottom-0 w-0.5 bg-slate-400/70" style={{ left: '30%' }} title="30% guideline" /></GrowBar></div>
                       <div className="flex justify-between mt-1"><StatusLabel level={utilLevel(c.utilization)}>{pctTxt(c.utilization)} used · {c.utilization <= 0.3 ? 'Good' : c.utilization <= 0.5 ? 'Fair' : c.utilization <= 0.75 ? 'High' : 'Very high'}</StatusLabel><span className="text-[11px] text-slate-400">guideline: under 30%</span></div>
@@ -1769,7 +1940,7 @@
             <div>
               <div className="relative mx-auto" style={{ width: 190 }}>
                 <ChartBox height={190} label="Spending share by category" dataKey={'c' + JSON.stringify(cat.rows)} build={(th, f) => Analytics.charts.categories(cat, th, f)} />
-                <div className="absolute inset-0 grid place-items-center pointer-events-none text-center"><div><p className="num text-base font-bold leading-tight">{fmt(cat.total, true)}</p><p className="text-[11px] text-slate-500">last {period} months</p></div></div>
+                <div className="absolute inset-0 grid place-items-center pointer-events-none text-center"><div><p className="num text-base font-bold leading-tight"><AnimatedMoney value={cat.total} short /></p><p className="text-[11px] text-slate-500">last {period} months</p></div></div>
               </div>
               <ul className="space-y-2 text-sm mt-4">
                 {cat.rows.map((r, i) => (
@@ -1797,7 +1968,7 @@
             <div className="mt-3"><ChartBox height={130} label="Savings rate by month" dataKey={'r' + JSON.stringify(series.map((m) => m.savingsRate))} build={(th) => Analytics.charts.savingsRate(series, th)} /></div>
           </Card>
           <Card className="p-4">
-            <div className="flex items-baseline justify-between"><p className="font-semibold">Debt-to-income</p><span className="num text-2xl font-bold">{pctTxt(dti)}</span></div>
+            <div className="flex items-baseline justify-between"><p className="font-semibold">Debt-to-income</p><span className="num text-2xl font-extrabold tracking-tight">{pctTxt(dti)}</span></div>
             <p className="text-xs text-slate-500">Minimum debt payments {fmt(ind.debtPayments)} + housing {fmt(ind.housing)} ÷ average income {fmt(ind.avgIncome)}/mo</p>
             <div className="mt-3 relative h-3 rounded-full overflow-hidden flex">
               <div className="h-full bg-emerald-500/25" style={{ width: '33.3%' }} /><div className="h-full bg-amber-400/30" style={{ width: '26.7%' }} /><div className="h-full bg-orange-400/30" style={{ width: '11.7%' }} /><div className="h-full bg-rose-500/25" style={{ width: '28.3%' }} />
@@ -1813,7 +1984,7 @@
         <Card className="p-4">
           {cf.accounts === 0 ? <p className="text-sm text-slate-500">Add a bank account or log cash to see your balance over time.</p> : <>
             <div className="flex gap-4 text-sm mb-2">
-              <div><p className="text-xs text-slate-500">Now</p><p className="num font-bold">{fmt(cf.end)}</p></div>
+              <div><p className="text-xs text-slate-500">Now</p><p className="num font-bold"><AnimatedMoney value={cf.end} /></p></div>
               <div><p className="text-xs text-slate-500">Change</p><p className={cls('num font-bold', cf.change < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400')}>{cf.change >= 0 ? '+' : ''}{fmt(cf.change)}</p></div>
               <div><p className="text-xs text-slate-500">Lowest</p><p className="num font-bold">{fmt(cf.min)}</p></div>
             </div>
@@ -1846,7 +2017,7 @@
                 <Button className="mt-3 !h-10" onClick={() => setModal({ kind: 'setup', fundType: 'emergency' })}><Icon name="ShieldCheck" size={16} />Set up</Button></div>
             </Card>}
         {goals.length > 0 && <div className="mt-3 space-y-3">{goals.map((g) => <GoalCard key={g.id} fund={g} onMove={(mode) => setModal({ kind: 'move', fund: g, mode })} onEdit={() => setModal({ kind: 'setup', fund: g })} />)}</div>}
-        <button onClick={() => setModal({ kind: 'setup', fundType: 'goal' })} className="mt-3 w-full rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 p-3 text-sm font-semibold text-slate-600 dark:text-slate-300 inline-flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800"><Icon name="Plus" size={16} />New savings goal</button>
+        <button onClick={() => setModal({ kind: 'setup', fundType: 'goal' })} className="press mt-3 w-full rounded-[20px] border-2 border-dashed border-slate-300 dark:border-slate-700 p-3 text-sm font-semibold text-slate-600 dark:text-slate-300 inline-flex items-center justify-center gap-2 active:bg-brand-500/5"><Icon name="Plus" size={16} />New savings goal</button>
         <Sheet open={!!modal} title={modal?.kind === 'move' ? (modal.mode === 'add' ? `Add funds · ${modal.fund.name}` : `Withdraw funds · ${modal.fund.name}`) : modal?.fund ? `Edit ${modal.fund.name}` : modal?.fundType === 'emergency' ? 'Emergency fund' : 'New savings goal'} onClose={() => setModal(null)}>
           {modal?.kind === 'move' && <FundMoveForm fund={modal.fund} initialMode={modal.mode} onDone={() => setModal(null)} />}
           {modal?.kind === 'setup' && <FundSetupForm fund={modal.fund} fundType={modal.fund ? modal.fund.fundType : modal.fundType} onDone={() => setModal(null)} />}
@@ -1873,19 +2044,19 @@
     const milestones = [1, 3, 6].filter((m) => m <= Math.max(6, f.targetMonths));
     const maxMonths = Math.max(6, f.targetMonths);
     return (
-      <Card className={cls('p-4 relative overflow-hidden', delta && delta.d > 0 && 'glow')}>
+      <Card className={cls('p-4 relative overflow-hidden bg-gradient-to-br from-emerald-500/[.07] to-transparent', delta && delta.d > 0 && 'glow')}>
         <div className="flex gap-4 items-center">
           <LiquidGauge pct={f.progress} color={f.progress >= 1 ? '#0ca30c' : '#10b981'} />
           <div className="flex-1 min-w-0 relative">
             <DeltaChip delta={delta} />
             <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1"><Icon name="ShieldCheck" size={13} />{f.name}</p>
-            <p className="text-2xl font-bold tracking-tight mt-0.5"><AnimatedMoney value={f.balance} /></p>
+            <p className="text-[26px] leading-8 font-extrabold tracking-tight mt-0.5"><AnimatedMoney value={f.balance} /></p>
             <p className="text-xs text-slate-500">of <span className="num">{fmt(f.target)}</span> target{f.targetMode === 'months' ? ` · ${f.targetMonths} months of essentials` : ''}</p>
             {f.monthsCovered != null && <p className="text-xs mt-1 font-medium">{f.monthsCovered >= f.targetMonths && f.targetMode === 'months' ? '🎉 ' : ''}Covers <span className="num">{f.monthsCovered.toFixed(1)}</span> months of essentials</p>}
           </div>
         </div>
         {f.essentials > 0 && <div className="mt-4">
-          <GrowBar value={(f.monthsCovered || 0) / maxMonths} color="linear-gradient(90deg,#34d399,#059669)" h="h-2">
+          <GrowBar liquid value={(f.monthsCovered || 0) / maxMonths} color="linear-gradient(90deg,#6ee7b7,#10b981 45%,#047857)" h="h-2.5">
             {milestones.map((m) => <span key={m} className="absolute top-0 bottom-0 w-0.5 bg-white/80 dark:bg-slate-900/80" style={{ left: `${(m / maxMonths) * 100}%` }} />)}
           </GrowBar>
           <div className="relative h-4 mt-1 text-[10px] text-slate-400">{milestones.map((m) => <span key={m} className={cls('absolute whitespace-nowrap', m === maxMonths ? '-translate-x-full' : '-translate-x-1/2')} style={{ left: `${(m / maxMonths) * 100}%` }}>{m} mo</span>)}</div>
@@ -1907,7 +2078,7 @@
     return (
       <Card className={cls('p-4 relative', delta && delta.d > 0 && 'glow')}>
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl grid place-items-center text-white shrink-0" style={{ background: color }}><Icon name={g.icon} size={18} /></div>
+          <div className="w-10 h-10 rounded-[14px] grid place-items-center text-white shrink-0" style={{ background: `linear-gradient(135deg, ${color}cc, ${color})`, boxShadow: `0 8px 16px -8px ${color}` }}><Icon name={g.icon} size={18} /></div>
           <div className="flex-1 min-w-0 relative">
             <DeltaChip delta={delta} />
             <p className="font-semibold truncate">{g.name}</p>
@@ -1915,7 +2086,7 @@
           </div>
           <span className="num text-sm font-bold" style={{ color }}>{Math.round(Math.min(1, g.progress) * 100)}%</span>
         </div>
-        <div className="mt-3"><GrowBar value={g.progress} color={`linear-gradient(90deg, ${color}aa, ${color})`} /></div>
+        <div className="mt-3"><GrowBar liquid h="h-3" value={g.progress} color={`linear-gradient(90deg, ${color}88, ${color})`} /></div>
         <p className="text-xs text-slate-500 mt-2">{done ? '🎉 Goal reached!' : g.perMonthNeeded ? `Save ${fmt(g.perMonthNeeded)}/month to reach it on time.` : `${fmt(Math.max(0, g.target - g.balance))} to go.`}</p>
         <div className="flex gap-2 mt-3">
           <Button variant="secondary" className="flex-1 !h-9 !text-sm" onClick={() => onMove('add')}><Icon name="Plus" size={15} />Add Funds</Button>
@@ -1958,7 +2129,7 @@
           <Field label="Amount"><Input inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus /></Field>
           <Field label="Date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
         </div>
-        {mode === 'add' && fund.target > fund.balance && <div className="flex gap-2 flex-wrap">{[50, 100, 250, Math.ceil(fund.target - fund.balance)].filter((v, i, a) => v > 0 && a.indexOf(v) === i).map((v) => <button type="button" key={v} onClick={() => setAmount(String(v))} className="text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800">{v === Math.ceil(fund.target - fund.balance) ? `Fill to target (${fmt(v, true)})` : fmt(v, true)}</button>)}</div>}
+        {mode === 'add' && fund.target > fund.balance && <div className="flex gap-2 flex-wrap">{[50, 100, 250, Math.ceil(fund.target - fund.balance)].filter((v, i, a) => v > 0 && a.indexOf(v) === i).map((v) => <button type="button" key={v} onClick={() => setAmount(String(v))} className="press text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-900/[.05] dark:bg-white/[.07]">{v === Math.ceil(fund.target - fund.balance) ? `Fill to target (${fmt(v, true)})` : fmt(v, true)}</button>)}</div>}
         <Field label={mode === 'add' ? 'Money comes from' : 'Money goes to'} hint={link ? 'Recorded as a transfer on both sides: your total net worth stays the same.' : 'Use this when the fund is a separate account, e.g. a high-yield savings account.'}>
           <Select options={[{ value: '', label: 'Not tracked here (separate account)' }, ...sources.map((a) => ({ value: a.id, label: `${a.name} · ${fmt(a.balance)}` }))]} value={link} onChange={(e) => setLink(e.target.value)} />
         </Field>
@@ -2025,8 +2196,8 @@
         {!emergency && <>
           <Field label="Target date (optional)"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
           <div><p className="text-[13px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">Look</p>
-            <div className="flex gap-2 flex-wrap">{FUND_COLORS.map((c, i) => <button type="button" key={c} onClick={() => setColor(i)} aria-label={`Color ${i + 1}`} className={cls('w-8 h-8 rounded-full ring-offset-2 dark:ring-offset-slate-900', color === i && 'ring-2 ring-slate-900 dark:ring-white')} style={{ background: c }} />)}</div>
-            <div className="flex gap-2 flex-wrap mt-2">{GOAL_ICONS.map((ic) => <button type="button" key={ic} onClick={() => setIcon(ic)} aria-label={ic} className={cls('w-10 h-10 rounded-xl grid place-items-center border-2', icon === ic ? 'border-slate-900 dark:border-white' : 'border-slate-200 dark:border-slate-700')}><Icon name={ic} size={18} /></button>)}</div>
+            <div className="flex gap-2 flex-wrap">{FUND_COLORS.map((c, i) => <button type="button" key={c} onClick={() => setColor(i)} aria-label={`Color ${i + 1}`} className={cls('press w-8 h-8 rounded-full ring-offset-2 dark:ring-offset-slate-900', color === i && 'ring-2 ring-slate-900 dark:ring-white')} style={{ background: c }} />)}</div>
+            <div className="flex gap-2 flex-wrap mt-2">{GOAL_ICONS.map((ic) => <button type="button" key={ic} onClick={() => setIcon(ic)} aria-label={ic} className={cls('press w-10 h-10 rounded-xl grid place-items-center border-2', icon === ic ? 'border-slate-900 dark:border-white' : 'border-slate-200 dark:border-slate-700')}><Icon name={ic} size={18} /></button>)}</div>
           </div>
         </>}
         {!raw && <Field label="Already saved (optional)" hint="Money already in this fund today."><Input inputMode="decimal" placeholder="0.00" value={start} onChange={(e) => setStart(e.target.value)} /></Field>}
@@ -2115,7 +2286,7 @@
     };
 
     const Chip = ({ active, onClick, icon, label, tone }) => (
-      <button type="button" onClick={onClick} className={cls('rounded-xl border-2 px-2.5 py-2.5 text-left text-sm font-semibold flex items-center gap-2 transition-colors', active ? TONE[tone] || 'border-brand-500 bg-brand-50 text-brand-800 dark:bg-brand-500/10 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300')}>
+      <button type="button" onClick={onClick} className={cls('press rounded-xl border-2 px-2.5 py-2.5 text-left text-sm font-semibold flex items-center gap-2 transition-all duration-300 ease-in-out', active ? TONE[tone] || 'border-brand-500 bg-brand-50 text-brand-800 dark:bg-brand-500/10 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300')}>
         <Icon name={icon} size={16} className="shrink-0" /><span className="leading-tight">{label}</span>
       </button>
     );
@@ -2164,9 +2335,9 @@
     const [open, setOpen] = useState(false);
     return (
       <>
-        <div className="fixed inset-x-0 z-30 pointer-events-none" style={{ bottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
+        <div className="fixed inset-x-0 z-30 pointer-events-none" style={{ bottom: 'calc(6.25rem + env(safe-area-inset-bottom))' }}>
           <div className="max-w-lg mx-auto px-4 flex justify-end">
-            <button onClick={() => setOpen(true)} aria-label="Quick Log Entry" className="pointer-events-auto h-14 pl-4 pr-5 rounded-2xl bg-brand-600 text-white shadow-lg shadow-brand-600/30 font-semibold inline-flex items-center gap-2 active:scale-95 transition-transform">
+            <button onClick={() => setOpen(true)} aria-label="Quick Log Entry" className="press fab-in press pointer-events-auto h-14 pl-4 pr-5 rounded-[20px] text-white font-bold inline-flex items-center gap-2 bg-gradient-to-br from-brand-500 to-emerald-700 shadow-[0_14px_28px_-10px_rgba(5,150,105,.75),inset_0_1px_0_rgba(255,255,255,.3)] active:scale-95">
               <Icon name="Plus" size={22} strokeWidth={2.5} />Quick Log
             </button>
           </div>
@@ -2225,9 +2396,9 @@
     return (
       <>
         <SectionTitle action={<div className="flex items-center gap-1">
-          <button className="w-7 h-7 grid place-items-center rounded-lg text-slate-500" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" size={16} /></button>
+          <button className="press w-7 h-7 grid place-items-center rounded-lg text-slate-500" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" size={16} /></button>
           <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 w-[72px] text-center">{monthLabel(month, { month: 'short', year: 'numeric' })}</span>
-          <button className="w-7 h-7 grid place-items-center rounded-lg text-slate-500 disabled:opacity-30" disabled={month >= monthKey(todayISO())} onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" size={16} /></button>
+          <button className="press w-7 h-7 grid place-items-center rounded-lg text-slate-500 disabled:opacity-30" disabled={month >= monthKey(todayISO())} onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" size={16} /></button>
         </div>}>Monthly report</SectionTitle>
         <Card className="p-4">
           <div className="grid grid-cols-3 gap-2 text-center">
@@ -2277,7 +2448,7 @@
 
     const Row = ({ icon, label, sub, children, onClick, danger }) => (
       <div className={cls('flex items-center gap-3 p-3.5', onClick && 'cursor-pointer active:bg-slate-50 dark:active:bg-slate-800/50')} onClick={onClick}>
-        <div className={cls('w-9 h-9 rounded-xl grid place-items-center', danger ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300')}><Icon name={icon} size={18} /></div>
+        <div className={cls('w-9 h-9 rounded-xl grid place-items-center', danger ? 'bg-rose-100 text-rose-600 dark:bg-rose-500/15' : 'bg-slate-900/[.05] dark:bg-white/[.07] text-slate-600 dark:text-slate-300')}><Icon name={icon} size={18} /></div>
         <div className="flex-1 min-w-0"><p className={cls('font-medium', danger && 'text-rose-600')}>{label}</p>{sub && <p className="text-xs text-slate-500">{sub}</p>}</div>
         {children}
       </div>
@@ -2307,7 +2478,7 @@
 
     return (
       <div>
-        <header className="pt-2"><h1 className="text-2xl font-bold tracking-tight">Settings</h1></header>
+        <header className="pt-2"><h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Settings</h1></header>
 
         <Card className="mt-4 p-4 flex gap-3 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20">
           <Icon name="ShieldCheck" size={22} className="text-emerald-600 shrink-0" />
@@ -2315,7 +2486,7 @@
         </Card>
 
         <SectionTitle>Preferences</SectionTitle>
-        <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+        <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
           <Row icon="Coins" label="Currency">
             <select className={smallSelect} value={st.currency || 'USD'} onChange={(e) => setSetting('currency', e.target.value)}>
               {['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'INR', 'JPY', 'CHF', 'MXN', 'BRL', 'ZAR', 'SGD'].map((c) => <option key={c}>{c}</option>)}
@@ -2327,7 +2498,7 @@
             </select>
           </Row>
           <Row icon="Bell" label="Bill & subscription reminders" sub={notifyStatus ? notifyStatus.note : 'Checking…'}>
-            <button onClick={toggleNotify} role="switch" aria-checked={!!st.notify} className={cls('w-12 h-7 rounded-full p-0.5 transition-colors', st.notify ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-700')}>
+            <button onClick={toggleNotify} role="switch" aria-checked={!!st.notify} className={cls('press w-12 h-7 rounded-full p-0.5 transition-colors duration-300', st.notify ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-700')}>
               <span className={cls('block w-6 h-6 rounded-full bg-white shadow transition-transform', st.notify && 'translate-x-5')} />
             </button>
           </Row>
@@ -2340,7 +2511,7 @@
         </Card>
 
         <SectionTitle>Your data</SectionTitle>
-        <Card className="divide-y divide-slate-100 dark:divide-slate-800">
+        <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
           <Row icon="Download" label="Back up (JSON)" sub={st.lastBackup ? `Last backup ${prettyDate(st.lastBackup)}` : 'Never backed up'} onClick={exportJSON}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
           <Row icon="FileSpreadsheet" label="Export transactions (CSV)" onClick={exportCSV}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
           <Row icon="HardDrive" label="Persistent storage" sub={storage ? `${(storage.used / 1024).toFixed(0)} KB used · ${storage.persisted ? 'protected' : 'may be cleared by browser'}` : 'Checking…'} onClick={storage && !storage.persisted ? persist : undefined}>
@@ -2503,15 +2674,15 @@
 
     const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install, recurring, recurringAction };
 
-    if (!ready) return <div id="boot">Opening Centric Wealth…</div>;
+    if (!ready) return <SkeletonScreen />;
     if (error) return <div className="p-6"><Card className="p-4"><p className="font-semibold text-rose-600">Storage unavailable</p><p className="text-sm text-slate-500 mt-1">{error}. Private-browsing modes in some browsers block IndexedDB.</p></Card></div>;
 
     return (
       <AppCtx.Provider value={ctx}>
         <div className="min-h-full max-w-lg mx-auto">
-          {!online && <div className="pt-safe bg-slate-800 text-white text-xs text-center py-1.5">Offline — everything still works</div>}
+          {!online && <div className="pt-safe fade-in"><div className="mx-4 mt-2 rounded-full bg-slate-900/85 dark:bg-white/10 text-white text-xs font-semibold text-center py-1.5 inline-flex w-[calc(100%-2rem)] justify-center gap-1.5 items-center"><Icon name="WifiOff" size={13} />Offline — everything still works</div></div>}
           <main className={cls('px-4 pt-safe', tab === 'dashboard' || tab === 'transactions' ? 'pb-48' : 'pb-28')}>
-            <div className="pt-3">
+            <div className="pt-3 stagger" key={tab + (tab === 'budget' ? '/' + sub : '')}>
               {tab === 'dashboard' && <Dashboard go={go} />}
               {tab === 'transactions' && <Transactions />}
               {tab === 'upload' && <UploadView />}
@@ -2521,15 +2692,18 @@
             </div>
           </main>
 
-          <nav className="fixed bottom-0 inset-x-0 z-40 border-t border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 backdrop-blur-lg pb-safe" aria-label="Main">
-            <div className="max-w-lg mx-auto grid grid-cols-6">
+          <nav className="fixed inset-x-0 bottom-0 z-40 px-3 pointer-events-none" style={{ paddingBottom: 'max(.6rem, env(safe-area-inset-bottom))' }} aria-label="Main">
+            <div className="glass pointer-events-auto relative max-w-lg mx-auto grid grid-cols-6 rounded-[26px] p-1.5">
+              {(() => { const i = Math.max(0, TABS.findIndex((t) => t.id === tab)); return (
+                <span aria-hidden="true" className="absolute top-1.5 bottom-1.5 left-1.5 rounded-[20px] bg-gradient-to-b from-brand-500/15 to-brand-500/[.07] dark:from-brand-400/20 dark:to-brand-400/[.06] ring-1 ring-brand-500/15 transition-transform duration-300 ease-out"
+                  style={{ width: 'calc((100% - .75rem) / 6)', transform: `translateX(${i * 100}%)` }} />); })()}
               {TABS.map((t) => {
                 const active = tab === t.id;
                 return (
                   <button key={t.id} onClick={() => go(t.id)} aria-label={t.aria || t.label} aria-current={active ? 'page' : undefined}
-                    className={cls('flex flex-col items-center justify-center gap-1 h-16 text-[10px] min-[380px]:text-[11px] font-medium transition-colors min-w-0', active ? 'text-brand-600 dark:text-brand-400' : 'text-slate-500 dark:text-slate-400')}>
-                    <span className={cls('grid place-items-center w-11 h-7 rounded-full transition-colors', active && 'bg-brand-100 dark:bg-brand-500/15')}><Icon name={t.icon} size={20} strokeWidth={active ? 2.4 : 2} /></span>
-                    <span className="max-w-full truncate px-0.5">{t.label}</span>
+                    className={cls('press relative z-10 flex flex-col items-center justify-center gap-0.5 h-[52px] text-[10px] min-[410px]:text-[11px] tracking-[-0.01em] font-semibold min-w-0 rounded-[20px]', active ? 'text-brand-700 dark:text-brand-400' : 'text-slate-500 dark:text-slate-400')}>
+                    <Icon name={t.icon} size={20} strokeWidth={active ? 2.4 : 2} className={cls('transition-transform duration-300 ease-out', active && '-translate-y-px scale-110')} />
+                    <span className="max-w-full truncate">{t.label}</span>
                   </button>
                 );
               })}
