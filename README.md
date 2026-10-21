@@ -51,3 +51,15 @@ Reads bank and credit-card statements (PDF or CSV) in the browser, categorises t
 - Errors carry a `code` (e.g. `PDF_PASSWORD`, `PDF_NO_TEXT`, `CSV_INVALID`, `NO_TRANSACTIONS`).
 - Edit categories in `RULES`, or call `StatementParser.setRules([...])`.
 - Scanned (image-only) PDFs need OCR and are rejected with `PDF_NO_TEXT`; use the bank's CSV export instead.
+
+## Subscriptions & bills (`recurring-scanner.js`)
+Scans saved transactions for repeating charges. Everything is rule-based and runs on the device.
+
+- **Detection:** groups charges by a normalised merchant name ("NETFLIX.COM 866-579 CA" becomes "NETFLIX"), clusters similar amounts, and checks the timing (weekly through yearly). Utility bills may vary by about 40% month to month. Everyday merchants (cafés, fuel, groceries) only count with 4+ identical charges on a consistent day.
+- **Review flags:** price increase, charged twice, trial converted to a paid plan, no recent charge, and charged after you marked it cancelled.
+- **Dashboard card:** each item has **Keep** and **Mark as Cancelled**. Keep adds monthly and yearly items to Bills so they get due dates. Imported charges then mark those bills as paid automatically.
+- **Reminders** (Settings → Bill & subscription reminders) arrive:
+  - when the app is opened or brought back to the screen, on all platforms;
+  - in the background about once a day on Android, when the app is installed in Chrome;
+  - on iPhone and iPad, only after **Add to Home Screen** (iOS 16.4+), and then only while the app is opened.
+  The web has no way to schedule a notification for an exact future time without a push server. This app deliberately has no push server.

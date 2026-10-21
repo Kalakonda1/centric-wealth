@@ -188,6 +188,9 @@
   })();
   </script>
 
+  <!-- Recurring subscriptions/bills detection + local reminders (see recurring-scanner.js) -->
+  <script src="./recurring-scanner.js"></script>
+
   <!-- =====================================================================
        React app (JSX compiled in-browser by Babel Standalone)
        ===================================================================== -->
@@ -556,6 +559,8 @@
           </div>
         </Card>
 
+        <RecurringCard />
+
         <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'bills')}>All bills</button>}>Due soon</SectionTitle>
         <Card className="divide-y divide-slate-100 dark:divide-slate-800">
           {s.upcoming.length === 0 ? <p className="p-4 text-sm text-slate-500">Nothing due in the next 14 days.</p> :
@@ -589,6 +594,107 @@
           {recent.length === 0 ? <p className="p-4 text-sm text-slate-500">No transactions yet.</p> : recent.map((t) => <TxRow key={t.id} t={t} />)}
         </Card>
       </div>
+    );
+  }
+
+  /* ================================================= RECURRING CHARGES */
+  const CADENCE_LABEL = { weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', bimonthly: 'Every 2 months', quarterly: 'Quarterly', semiannual: 'Every 6 months', yearly: 'Yearly' };
+  const FLAG_STYLE = {
+    danger: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
+    warn: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
+    info: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+  };
+
+  function RecurringRow({ item }) {
+    const { fmt, recurringAction } = useApp();
+    const [busy, setBusy] = useState(false);
+    const act = async (a) => { setBusy(true); await recurringAction(a, item); setBusy(false); };
+    const cancelled = item.status === 'cancelled';
+    const sub = item.kind === 'subscription';
+    return (
+      <div className={cls('p-3.5', cancelled && !item.flags.some((f) => f.severity === 'danger') && 'opacity-60')}>
+        <div className="flex items-start gap-3">
+          <div className={cls('w-10 h-10 rounded-xl grid place-items-center shrink-0', sub ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' : 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300')}>
+            <Icon name={sub ? 'Repeat' : item.kind === 'bill' ? 'Receipt' : 'CalendarClock'} size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className={cls('font-medium truncate', cancelled && 'line-through decoration-slate-400')}>{item.merchant}</p>
+              <p className="num font-semibold shrink-0">{fmt(item.lastAmount)}</p>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {CADENCE_LABEL[item.cadence]} · {cancelled ? `cancelled ${prettyDate(item.decidedAt)}` : item.active ? `next ${prettyDate(item.nextDue)}` : `last ${prettyDate(item.lastDate)}`}
+              {item.confidence === 'low' ? ' · possible' : ` · ${item.occurrences} charges`}
+            </p>
+            {item.flags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {item.flags.map((f) => <span key={f.code} className={cls('text-[11px] font-medium px-2 py-0.5 rounded-md', FLAG_STYLE[f.severity])}>{f.message}</span>)}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className={cls('flex gap-2 mt-3', item.status !== 'new' && 'pl-[52px]')}>
+          {item.status === 'new' && <>
+            <Button variant="secondary" className="!h-9 !px-3 !text-sm flex-1 whitespace-nowrap" disabled={busy} onClick={() => act('keep')}><Icon name="Check" size={15} className="shrink-0" />Keep</Button>
+            <Button variant="secondary" className="!h-9 !px-2 !text-sm flex-[1.4] whitespace-nowrap !text-rose-600 dark:!text-rose-400" disabled={busy} onClick={() => act('cancel')}><Icon name="Ban" size={15} className="shrink-0" />Mark as Cancelled</Button>
+          </>}
+          {item.status === 'kept' && <>
+            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1 mr-auto"><Icon name="CircleCheck" size={14} />Kept{item.billId ? ' · in Bills' : ''}</span>
+            <button className="text-xs font-semibold text-rose-600 dark:text-rose-400" disabled={busy} onClick={() => act('cancel')}>Mark as Cancelled</button>
+          </>}
+          {cancelled && <>
+            <span className="text-xs font-semibold text-slate-500 mr-auto">Saves {fmt(item.annualCost)}/yr</span>
+            <button className="text-xs font-semibold text-brand-700 dark:text-brand-400" disabled={busy} onClick={() => act('undo')}>Undo</button>
+          </>}
+        </div>
+      </div>
+    );
+  }
+
+  function RecurringCard() {
+    const { recurring, fmt, go } = useApp();
+    const [open, setOpen] = useState(false);
+    if (!recurring) return null;
+    const { items, summary } = recurring;
+    const review = items.filter((i) => i.status === 'new' || i.flags.some((f) => f.severity === 'danger'));
+    const kept = items.filter((i) => i.status === 'kept' && !review.includes(i));
+    const cancelled = items.filter((i) => i.status === 'cancelled' && !review.includes(i));
+    const preview = review.slice(0, 3);
+
+    return (
+      <>
+        <SectionTitle action={items.length > 0 && <button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setOpen(true)}>See all ({items.length})</button>}>Subscriptions & bills</SectionTitle>
+        <Card className="overflow-hidden">
+          <div className="p-4 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-baseline justify-between">
+              <p className="num text-xl font-bold">{fmt(summary.monthlyTotal)}<span className="text-sm font-medium text-slate-500">/mo recurring</span></p>
+              {summary.needsReview > 0 && <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">{summary.needsReview} to review</span>}
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              {summary.subscriptions} subscription{summary.subscriptions === 1 ? '' : 's'} · {summary.bills} bill{summary.bills === 1 ? '' : 's'} · {fmt(summary.annualTotal, true)}/yr
+              {summary.cancelledSavingsAnnual > 0 && <span className="text-emerald-600 dark:text-emerald-400"> · saving {fmt(summary.cancelledSavingsAnnual)}/yr</span>}
+            </p>
+          </div>
+          {items.length === 0 ? (
+            <p className="p-4 text-sm text-slate-500">No repeating charges found yet. Import a couple of months of statements and subscriptions will show up here. <button className="font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('upload')}>Import</button></p>
+          ) : preview.length === 0 ? (
+            <p className="p-4 text-sm text-slate-500 flex items-center gap-2"><Icon name="CircleCheck" size={16} className="text-emerald-600" />All recurring charges reviewed.</p>
+          ) : (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">{preview.map((i) => <RecurringRow key={i.key} item={i} />)}</div>
+          )}
+          {review.length > preview.length && <button className="w-full p-3 text-sm font-semibold text-brand-700 dark:text-brand-400 border-t border-slate-100 dark:border-slate-800" onClick={() => setOpen(true)}>Review {review.length - preview.length} more</button>}
+        </Card>
+
+        <Sheet open={open} title="Subscriptions & bills" onClose={() => setOpen(false)}>
+          <p className="text-sm text-slate-500 -mt-1 mb-2">Found by looking for the same merchant charging a similar amount on a regular schedule. Everything is worked out on this device.</p>
+          {[['Needs review', review], ['Kept', kept], ['Cancelled', cancelled]].filter(([, l]) => l.length).map(([title, list]) => (
+            <div key={title}>
+              <SectionTitle>{title} · {list.length}</SectionTitle>
+              <Card className="divide-y divide-slate-100 dark:divide-slate-800">{list.map((i) => <RecurringRow key={i.key} item={i} />)}</Card>
+            </div>
+          ))}
+        </Sheet>
+      </>
     );
   }
 
@@ -988,7 +1094,7 @@
         <Card className="p-4 mt-4">
           <p className="text-sm text-slate-500">Recurring bills</p>
           <p className="num text-2xl font-bold">{fmt(monthlyTotal)}<span className="text-base font-medium text-slate-500">/mo</span></p>
-          <p className="text-xs text-slate-500 mt-1">Reminders run when the app is opened{data.settings.notify ? ' · notifications on' : ''}.</p>
+          <p className="text-xs text-slate-500 mt-1">{data.settings.notify ? 'Reminders on' : 'Turn on reminders in Settings'} · charges found in imports mark bills as paid.</p>
         </Card>
         <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => setEdit({ name: '', amount: '', dueDay: new Date().getDate(), dueMonth: new Date().getMonth() + 1, frequency: 'monthly', isSubscription: false, category: 'Utilities', active: true })}>+ Add</button>}>Bills & subscriptions</SectionTitle>
         {bills.length === 0 ? <Card><Empty icon="Bell" title="No bills yet" body="Add rent, utilities and subscriptions to get due-date reminders." /></Card> :
@@ -1123,11 +1229,16 @@
       const rows = [['Date', 'Type', 'Category', 'Description', 'Amount'], ...[...data.transactions].sort((a, b) => a.date.localeCompare(b.date)).map((t) => [t.date, t.type, t.category, t.description, (t.type === 'expense' ? -t.amount : t.amount).toFixed(2)])];
       download(`centric-wealth-transactions-${todayISO()}.csv`, rows.map((r) => r.map(esc).join(',')).join('\n'), 'text/csv');
     };
+    const [notifyStatus, setNotifyStatus] = useState(null);
+    useEffect(() => { RecurringScanner.notifications.status().then(setNotifyStatus); }, [st.notify]);
     const toggleNotify = async () => {
       if (st.notify) return setSetting('notify', false);
-      if (!('Notification' in window)) return toast('Notifications not supported here', 'error');
-      const p = await Notification.requestPermission();
-      if (p === 'granted') { await setSetting('notify', true); toast('Bill reminders on'); } else toast('Permission denied', 'error');
+      // Called straight from the tap: mobile browsers only show the permission prompt for user gestures.
+      const r = await RecurringScanner.notifications.requestPermission();
+      if (r.granted) { await setSetting('notify', true); toast(r.background === 'periodic-sync' ? 'Reminders on, including in the background' : 'Reminders on'); return; }
+      const why = { 'ios-install-required': 'On iPhone, add the app to your Home Screen first', denied: 'Notifications are blocked in your browser settings', dismissed: 'Permission not granted', unsupported: 'This browser does not support notifications' };
+      toast(why[r.reason] || 'Permission not granted', 'error');
+      RecurringScanner.notifications.status().then(setNotifyStatus);
     };
     const persist = async () => { const ok = navigator.storage?.persist ? await navigator.storage.persist() : false; toast(ok ? 'Storage protected from eviction' : 'Browser declined — install the app and try again', ok ? 'ok' : 'error'); setStorage((s) => ({ ...s, persisted: ok })); };
     const wipe = async () => { if (prompt('Type DELETE to erase all data on this device.') === 'DELETE') { await DB.wipe(); await reload(); toast('All data erased'); } };
@@ -1154,11 +1265,12 @@
               <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
             </select>
           </Row>
-          <Row icon="Bell" label="Bill reminders" sub="Shown when you open the app — no push server">
+          <Row icon="Bell" label="Bill & subscription reminders" sub={notifyStatus ? notifyStatus.note : 'Checking…'}>
             <button onClick={toggleNotify} role="switch" aria-checked={!!st.notify} className={cls('w-12 h-7 rounded-full p-0.5 transition-colors', st.notify ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-700')}>
               <span className={cls('block w-6 h-6 rounded-full bg-white shadow transition-transform', st.notify && 'translate-x-5')} />
             </button>
           </Row>
+          {st.notify && <Row icon="BellRing" label="Send a test reminder" onClick={async () => { const ok = await RecurringScanner.notifications.test(); toast(ok ? 'Test sent' : 'Could not show a notification', ok ? 'ok' : 'error'); }}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>}
           <Row icon="CalendarClock" label="Remind me">
             <select className={smallSelect} value={st.reminderDays ?? 3} onChange={(e) => setSetting('reminderDays', Number(e.target.value))}>
               {[1, 2, 3, 5, 7].map((d) => <option key={d} value={d}>{d} day{d > 1 ? 's' : ''} before</option>)}
@@ -1195,6 +1307,8 @@
       [5, 12, 18].forEach((d, i) => tx.push({ type: 'expense', amount: 24 + i * 11, category: 'Dining', date: mk(m, d), description: 'Corner cafe' }));
       tx.push({ type: 'expense', amount: 48.2, category: 'Transport', date: mk(m, 8), description: 'Fuel station' });
       tx.push({ type: 'expense', amount: 15.99, category: 'Subscriptions', date: mk(m, 11), description: 'Streaming service' });
+      tx.push({ type: 'expense', amount: m === 0 ? 12.99 : 9.99, category: 'Subscriptions', date: mk(m, 4), description: 'Fitness app membership' });
+      tx.push({ type: 'expense', amount: 6.99, category: 'Subscriptions', date: mk(m, 9), description: 'Cloud photo storage' });
     }
     tx.forEach((t) => (t.hash = hashTx(t), t.source = 'sample'));
     return {
@@ -1214,24 +1328,6 @@
       ],
       budgets: [{ category: 'Groceries', limit: 450 }, { category: 'Dining', limit: 150 }, { category: 'Transport', limit: 120 }, { category: 'Utilities', limit: 160 }, { category: 'Shopping', limit: 200 }],
     };
-  }
-
-  /* ============================================================ reminders */
-  async function checkBillReminders(data) {
-    if (!data.settings.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
-    const days = data.settings.reminderDays ?? 3; const today = todayISO();
-    const notified = data.settings.notified || {};
-    const due = data.bills.filter((b) => b.active !== false).map((b) => ({ b, st: billStatus(b) }))
-      .filter(({ b, st }) => !st.paid && st.daysLeft <= days && notified[b.id] !== `${st.currentDue}@${today}`);
-    if (!due.length) return;
-    const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
-    for (const { b, st } of due) {
-      const body = `${b.name}: ${st.daysLeft < 0 ? 'overdue' : st.daysLeft === 0 ? 'due today' : `due in ${st.daysLeft} day${st.daysLeft > 1 ? 's' : ''}`}`;
-      const opts = { body, tag: `bill-${b.id}`, icon: './icon-192.png', badge: './icon-192.png' };
-      try { reg ? await reg.showNotification('Bill reminder', opts) : new Notification('Bill reminder', opts); } catch (_) {}
-      notified[b.id] = `${st.currentDue}@${today}`;
-    }
-    await DB.setSetting('notified', notified);
   }
 
   /* ================================================================= APP */
@@ -1272,13 +1368,26 @@
       apply(); mq.addEventListener('change', apply); return () => mq.removeEventListener('change', apply);
     }, [data.settings.theme]);
 
-    // Reminders: on load and whenever the app regains focus
+    // Recurring subscriptions & bills: detected locally from saved transactions (recurring-scanner.js)
+    const decisionsJSON = JSON.stringify(data.settings.recurringDecisions || {});
+    const recurring = useMemo(() => (window.RecurringScanner
+      ? RecurringScanner.analyze(data.transactions, { bills: data.bills, decisions: JSON.parse(decisionsJSON) })
+      : null), [data.transactions, data.bills, decisionsJSON]);
+
+    // Imported charges mark linked bills as paid (and follow subscription price changes).
     useEffect(() => {
-      if (!ready) return;
-      checkBillReminders(data);
-      const vis = () => document.visibilityState === 'visible' && checkBillReminders(data);
+      if (!ready || !recurring) return;
+      RecurringScanner.reconcile(recurring.items, data.bills).then((n) => n && store.reload('bills')).catch(() => {});
+    }, [ready, recurring]);
+
+    // Reminders: rebuild the schedule, show anything due, arm timers; again whenever the app returns to the foreground.
+    useEffect(() => {
+      if (!ready || !recurring) return;
+      const run = () => RecurringScanner.notifications.sync({ items: recurring.items, bills: data.bills, leadDays: data.settings.reminderDays ?? 3, enabled: !!data.settings.notify }).catch((e) => console.warn('Reminder sync failed', e));
+      run();
+      const vis = () => document.visibilityState === 'visible' && run();
       document.addEventListener('visibilitychange', vis); return () => document.removeEventListener('visibilitychange', vis);
-    }, [ready, data.bills, data.settings.notify, data.settings.reminderDays]);
+    }, [ready, recurring, data.settings.notify, data.settings.reminderDays]);
 
     const currency = data.settings.currency || 'USD';
     const fmt = useMemo(() => {
@@ -1294,7 +1403,15 @@
     }, [store, toast]);
     const install = async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; setInstallPrompt(null); };
 
-    const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install };
+    const recurringAction = useCallback(async (action, item) => {
+      try {
+        await RecurringScanner[action](item);
+        await store.reload(['bills', 'settings']);
+        toast(action === 'keep' ? `Keeping ${item.merchant}` : action === 'cancel' ? `${item.merchant} marked as cancelled` : 'Choice undone');
+      } catch (e) { toast(e.message, 'error'); }
+    }, [store, toast]);
+
+    const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install, recurring, recurringAction };
 
     if (!ready) return <div id="boot">Opening Centric Wealth…</div>;
     if (error) return <div className="p-6"><Card className="p-4"><p className="font-semibold text-rose-600">Storage unavailable</p><p className="text-sm text-slate-500 mt-1">{error}. Private-browsing modes in some browsers block IndexedDB.</p></Card></div>;
