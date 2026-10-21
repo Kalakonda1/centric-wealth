@@ -1,23 +1,31 @@
 /* Centric Wealth service worker — offline-first caching. Bump VERSION on every deploy. */
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const CACHE = `centric-wealth-${VERSION}`;
 
-const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
+const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js'];
 const CDN = [
   'https://cdn.tailwindcss.com/3.4.16',
   'https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js',
   'https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js',
   'https://cdn.jsdelivr.net/npm/@babel/standalone@7.29.10/babel.min.js',
   'https://cdn.jsdelivr.net/npm/lucide@0.453.0/dist/umd/lucide.min.js',
+  // Statement parser libraries (statement-parser.js)
+  'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs',
+  'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs',
+  'https://cdn.jsdelivr.net/npm/papaparse@5.5.3/papaparse.min.js',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     await cache.addAll(LOCAL);
-    // CDN files are fetched no-cors so an opaque response can still be cached.
+    // CDN files: CORS first (ES modules like pdf.js refuse opaque responses), no-cors as a fallback.
     await Promise.all(CDN.map(async (url) => {
-      try { await cache.put(url, await fetch(url, { mode: 'no-cors' })); } catch (e) { /* retried at runtime */ }
+      try {
+        let res = await fetch(url, { mode: 'cors' }).catch(() => null);
+        if (!res || !res.ok) res = await fetch(url, { mode: 'no-cors' });
+        await cache.put(url, res);
+      } catch (e) { /* retried at runtime */ }
     }));
     await self.skipWaiting();
   })());

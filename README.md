@@ -8,6 +8,7 @@ Everything runs in the browser. Data lives in IndexedDB on the device; there are
 | `index.html` | The whole app: FinanceDB (IndexedDB wrapper) + React UI |
 | `sw.js` | Service worker — caches the app and pinned CDN libraries for offline use |
 | `manifest.webmanifest` | Makes it installable ("Add to Home Screen") |
+| `statement-parser.js` | PDF/CSV statement import, categorisation and recurring detection |
 | `icon*.png`, `icon.svg` | App icons |
 
 ## Deploy to GitHub Pages
@@ -33,3 +34,20 @@ Stores: `transactions`, `debts`, `bills`, `budgets`, `accounts`, `settings`. To 
 - The Tailwind Play CDN is meant for prototyping; for production, build a static CSS file with the Tailwind CLI.
 - Bill reminders fire when the app is opened or brought to the foreground. True background push needs a push server, which this app deliberately doesn't use.
 - Browsers can evict site storage. Use **Settings → Persistent storage** and make regular JSON backups.
+
+## Statement parser (`statement-parser.js`)
+Reads bank and credit-card statements (PDF or CSV) in the browser, categorises them with a local rule dictionary, flags recurring charges and saves them into the app's IndexedDB. No server or API keys.
+
+```html
+<script src="./statement-parser.js"></script>
+<script>
+  const txs = await StatementParser.parseStatement(file);
+  // [{ date: '2026-10-02', description: 'WHOLE FOODS MKT', amount: -84.2, category: 'Groceries', isRecurring: false }]
+</script>
+```
+- `amount` < 0 is money out, > 0 is money in.
+- `parseStatementDetailed(file)` also returns `recurring` (cadence, monthly cost, review reasons such as price increases or possible double billing), `warnings` (skipped rows with row numbers) and `saved` counts.
+- Options: `persist`, `password` (locked PDFs), `dateOrder` ('MDY'/'DMY'), `statementType`, `invertAmounts`, `customRules`, `onProgress`, `onWarning`.
+- Errors carry a `code` (e.g. `PDF_PASSWORD`, `PDF_NO_TEXT`, `CSV_INVALID`, `NO_TRANSACTIONS`).
+- Edit categories in `RULES`, or call `StatementParser.setRules([...])`.
+- Scanned (image-only) PDFs need OCR and are rejected with `PDF_NO_TEXT`; use the bank's CSV export instead.
