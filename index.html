@@ -189,6 +189,8 @@
   </script>
 
   <!-- Recurring subscriptions/bills detection + local reminders (see recurring-scanner.js) -->
+  <!-- PDF/CSV statement parsing for the Upload tab (see statement-parser.js) -->
+  <script src="./statement-parser.js"></script>
   <script src="./recurring-scanner.js"></script>
   <!-- Financial health score, 50/30/20 and debt payoff maths (see advisor-engine.js) -->
   <script src="./advisor-engine.js"></script>
@@ -219,34 +221,48 @@
   };
   const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const cls = (...a) => a.filter(Boolean).join(' ');
+  // Parses typed amounts like "1,234.56", "(45.00)" or "12,50".
+  const parseAmount = (v) => {
+    if (v == null) return NaN;
+    let s = String(v).trim(); if (!s) return NaN;
+    const neg = /^\(.*\)$/.test(s) || /-/.test(s);
+    s = s.replace(/[^0-9.,]/g, '');
+    if (/,\d{2}$/.test(s) && !/\.\d{2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.'); else s = s.replace(/,/g, '');
+    const n = parseFloat(s); return isNaN(n) ? NaN : neg ? -n : n;
+  };
 
   const EXPENSE_CATEGORIES = ['Housing', 'Utilities', 'Groceries', 'Dining', 'Transport', 'Health', 'Insurance', 'Shopping', 'Entertainment', 'Subscriptions', 'Debt Payment', 'Education', 'Travel', 'Gifts', 'Other'];
   const INCOME_CATEGORIES = ['Salary', 'Freelance', 'Interest', 'Refund', 'Gift', 'Other Income'];
   const DEBT_TYPES = ['Credit Card', 'Student Loan', 'Auto Loan', 'Mortgage', 'Personal Loan', 'Medical', 'Other'];
   const ACCOUNT_TYPES = ['Checking', 'Savings', 'Cash', 'Investment', 'Retirement', 'Property', 'Other'];
+  const TRANSFER_CATEGORIES = ['Transfer', 'Card Payment', 'Card Credit'];
 
-  // Keyword → category rules used for CSV auto-categorisation (edit freely).
-  const CATEGORY_RULES = [
-    [/rent|mortgage|landlord|hoa/i, 'Housing'],
-    [/electric|water|gas bill|utility|internet|comcast|verizon|at&t|t-mobile|phone/i, 'Utilities'],
-    [/grocery|market|aldi|kroger|publix|whole foods|trader joe|costco|walmart/i, 'Groceries'],
-    [/restaurant|cafe|coffee|starbucks|pizza|burger|doordash|uber eats|grubhub|bar & grill/i, 'Dining'],
-    [/uber|lyft|shell|exxon|chevron|fuel|parking|toll|transit|metro|airline/i, 'Transport'],
-    [/pharmacy|cvs|walgreens|doctor|dental|clinic|hospital/i, 'Health'],
-    [/insurance|geico|progressive|state farm/i, 'Insurance'],
-    [/netflix|spotify|hulu|disney|prime video|youtube|icloud|patreon|subscription/i, 'Subscriptions'],
-    [/amazon|target|best buy|ebay|etsy/i, 'Shopping'],
-    [/payroll|salary|direct dep/i, 'Salary'],
-    [/interest paid|dividend/i, 'Interest'],
-    [/refund|return/i, 'Refund'],
-  ];
-  const guessCategory = (desc, type) => {
-    for (const [re, cat] of CATEGORY_RULES) if (re.test(desc)) {
-      const isIncomeCat = INCOME_CATEGORIES.includes(cat);
-      if ((type === 'income') === isIncomeCat) return cat;
-    }
-    return type === 'income' ? 'Other Income' : 'Other';
-  };
+  /* ------------------------------------------------- bank vs credit accounts
+     Bank accounts (checking/savings/cash) live in the `accounts` store; credit cards live in `debts`
+     so the payoff planner and Advisor include them. Transactions carry accountType + accountName.
+     Imported ("ledger") accounts keep an anchor - a known balance on a date (statement ending balance,
+     or one you typed) - and their balance = anchor + every tagged transaction after that date. */
+  const BANK_TYPES = ['Checking', 'Savings', 'Cash'];
+  const isBankAccount = (a) => a.kind === 'bank' || (!a.kind && BANK_TYPES.includes(a.type));
+  const isCardDebt = (d) => d.kind === 'credit' || d.type === 'Credit Card';
+  const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  const acctTypeOf = (t) => (t.accountType === 'bank' || t.accountType === 'credit' ? t.accountType : null);
+  const isMoneyIn = (t) => t.type === 'income' || (t.type === 'transfer' && t.direction === 'in');
+  // Signed change to a balance: bank = cash in the account; credit = amount owed on the card.
+  const txEffect = (t, kind) => (kind === 'bank' ? 1 : -1) * (isMoneyIn(t) ? 1 : -1) * Math.abs(Number(t.amount) || 0);
+  function ledgerBalance(acct, kind, txs) {
+    let bal = Number(acct.anchorBalance) || 0;
+    for (const t of txs) if (acctTypeOf(t) === kind && sameName(t.accountName, acct.name) && (!acct.anchorDate || t.date > acct.anchorDate)) bal += txEffect(t, kind);
+    return round2(bal);
+  }
+  const balanceNote = (a) => !a.ledger ? '' : a.balanceSource === 'statement' ? `statement balance ${prettyDate(a.anchorDate)}` : a.balanceSource === 'manual' ? `balance set ${prettyDate(a.anchorDate)}` : 'estimated from transactions';
+  async function ensureAccount(kind, name, subtype, data) {
+    const found = (kind === 'bank' ? data.accounts.filter(isBankAccount) : data.debts.filter(isCardDebt)).find((a) => sameName(a.name, name));
+    if (found) return found;
+    return DB.put(kind === 'bank' ? 'accounts' : 'debts', kind === 'bank'
+      ? { name, type: subtype || 'Checking', balance: 0, kind: 'bank', ledger: true }
+      : { name, type: 'Credit Card', balance: 0, apr: 0, minPayment: 0, kind: 'credit', ledger: true });
+  }
 
   // Simple non-cryptographic hash for duplicate detection on import.
   const hashTx = (t) => { const s = `${t.date}|${round2(t.amount)}|${(t.description || '').toLowerCase().trim()}`; let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return String(h); };
@@ -278,44 +294,6 @@
   function simulatePayoff(debts, extra = 0, strategy = 'avalanche') {
     const r = AdvisorEngine.payoff(debts, extra, strategy);
     return { months: r.months || 0, interest: r.totalInterest, feasible: r.feasible, order: r.order.filter((o) => o.paidOffMonth).map((o) => ({ id: o.id, name: o.name, month: o.paidOffMonth })) };
-  }
-
-  /* -------------------------------------------------------------- CSV parse */
-  function parseCSV(text) {
-    const rows = []; let row = [], field = '', q = false;
-    text = text.replace(/^﻿/, '');
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i];
-      if (q) {
-        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
-        else field += c;
-      } else if (c === '"') q = true;
-      else if (c === ',' || c === ';' || c === '\t') { row.push(field); field = ''; }
-      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(field); rows.push(row); row = []; field = ''; }
-      else field += c;
-    }
-    if (field || row.length) { row.push(field); rows.push(row); }
-    return rows.filter((r) => r.some((v) => v.trim() !== ''));
-  }
-  const parseAmount = (v) => {
-    if (v == null) return NaN;
-    let s = String(v).trim(); if (!s) return NaN;
-    const neg = /^\(.*\)$/.test(s) || /-/.test(s) || /\bDR\b/i.test(s);
-    s = s.replace(/[^0-9.,]/g, '');
-    if (/,\d{2}$/.test(s) && !/\.\d{2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.'); else s = s.replace(/,/g, '');
-    const n = parseFloat(s); return isNaN(n) ? NaN : neg ? -n : n;
-  };
-  function parseDateFlexible(v, fmt = 'auto') {
-    const s = String(v || '').trim(); let m;
-    if ((m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/))) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
-    if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/))) {
-      let [, a, b, y] = m; if (y.length === 2) y = '20' + y;
-      let mo = a, d = b;
-      if (fmt === 'DMY' || (fmt === 'auto' && Number(a) > 12)) { mo = b; d = a; }
-      if (Number(mo) > 12) return null;
-      return `${y}-${pad(mo)}-${pad(d)}`;
-    }
-    const d = new Date(s); return isNaN(d) ? null : toISO(d);
   }
 
   /* ------------------------------------------------------------ app context */
@@ -465,6 +443,9 @@
       const expense = monthTx.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
       const assets = data.accounts.reduce((s, a) => s + (Number(a.balance) || 0), 0);
       const liabilities = data.debts.reduce((s, d) => s + (Number(d.balance) || 0), 0);
+      const bankAccts = data.accounts.filter(isBankAccount), cards = data.debts.filter(isCardDebt);
+      const bankBalance = bankAccts.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+      const cardOwed = cards.reduce((s, d) => s + (Number(d.balance) || 0), 0);
       const subs = data.bills.filter((b) => b.active !== false && b.isSubscription);
       const subsMonthly = subs.reduce((s, b) => s + monthlyCost(b), 0);
       const byCat = {};
@@ -472,7 +453,7 @@
       const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
       const upcoming = data.bills.filter((b) => b.active !== false).map((b) => ({ ...b, st: billStatus(b) }))
         .filter((b) => !b.st.paid && b.st.daysLeft <= 14).sort((a, b) => a.st.daysLeft - b.st.daysLeft);
-      return { mk, income, expense, net: income - expense, assets, liabilities, netWorth: assets - liabilities, subs, subsMonthly, topCats, upcoming, monthTx };
+      return { mk, income, expense, net: income - expense, assets, liabilities, netWorth: assets - liabilities, subs, subsMonthly, topCats, upcoming, monthTx, bankAccts, cards, bankBalance, cardOwed, netBalance: bankBalance - cardOwed };
     }, [data]);
   }
 
@@ -483,6 +464,7 @@
       green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400',
       red: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400',
       violet: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400',
+      sky: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-400',
     };
     return (
       <Card className="p-4 text-left active:scale-[.98] transition-transform cursor-pointer" onClick={onClick} role="button" tabIndex={0}>
@@ -499,7 +481,6 @@
     const s = useSummary();
     const savingsRate = s.income > 0 ? Math.round((s.net / s.income) * 100) : null;
     const recent = [...data.transactions].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 5);
-    const maxCat = s.topCats[0]?.[1] || 1;
     const isEmpty = !data.transactions.length && !data.accounts.length && !data.debts.length && !data.bills.length;
 
     return (
@@ -525,9 +506,31 @@
           </Card>
         )}
 
-        <div className="grid grid-cols-2 gap-3 mt-4">
-          <SummaryCard icon="Landmark" label="Net Worth" value={fmt(s.netWorth)} sub={`${fmt(s.assets, true)} assets\n${fmt(s.liabilities, true)} debt`} onClick={() => go('budget', 'assets')} />
-          <SummaryCard icon="TrendingUp" tone="green" label="Monthly Income" value={fmt(s.income)} sub={`${s.monthTx.filter((t) => t.type === 'income').length} deposits`} onClick={() => go('transactions')} />
+        <Card className="mt-4 p-4">
+          <div className="flex items-baseline justify-between">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Combined net balance</p>
+            <p className="text-[11px] text-slate-400">bank cash − card debt</p>
+          </div>
+          <p className={cls('num text-3xl font-bold tracking-tight mt-0.5', s.netBalance < 0 && 'text-rose-600 dark:text-rose-400')}>{fmt(s.netBalance)}</p>
+          {(s.bankBalance > 0 || s.cardOwed > 0) && <>
+            <div className="mt-3 h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
+              <div className="bg-sky-500" style={{ width: `${(Math.max(0, s.bankBalance) / (Math.max(0, s.bankBalance) + Math.max(0, s.cardOwed))) * 100}%` }} />
+              <div className="bg-rose-400" style={{ width: `${(Math.max(0, s.cardOwed) / (Math.max(0, s.bankBalance) + Math.max(0, s.cardOwed))) * 100}%` }} />
+            </div>
+            <div className="flex justify-between text-xs text-slate-500 mt-2">
+              <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-sky-500 inline-block" />Bank {fmt(s.bankBalance, true)}</span>
+              <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-rose-400 inline-block" />Cards {fmt(s.cardOwed, true)}</span>
+            </div>
+          </>}
+        </Card>
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <SummaryCard icon="Landmark" tone="sky" label="Bank Balance" value={fmt(s.bankBalance)} sub={`Liquid cash · ${s.bankAccts.length} account${s.bankAccts.length === 1 ? '' : 's'}${s.bankAccts.some((a) => a.ledger && a.balanceSource === 'estimated') ? '\nincludes estimates' : ''}`} onClick={() => go('budget', 'assets')} />
+          <SummaryCard icon="CreditCard" tone="red" label="Credit Card Owed" value={fmt(s.cardOwed)} sub={`${s.cards.length} card${s.cards.length === 1 ? '' : 's'}${s.cards.some((c) => c.ledger && c.balanceSource === 'estimated') ? '\nincludes estimates' : ''}`} onClick={() => go('budget', 'debt')} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <SummaryCard icon="Scale" label="Net Worth" value={fmt(s.netWorth)} sub={`${fmt(s.assets, true)} assets\n${fmt(s.liabilities, true)} debt`} onClick={() => go('budget', 'assets')} />
+          <SummaryCard icon="TrendingUp" tone="green" label="Monthly Income" value={fmt(s.income)} sub={(() => { const n = s.monthTx.filter((t) => t.type === 'income').length; return `${n} deposit${n === 1 ? '' : 's'}`; })()} onClick={() => go('transactions')} />
           <SummaryCard icon="TrendingDown" tone="red" label="Monthly Expense" value={fmt(s.expense)} sub={savingsRate != null ? `Saving ${savingsRate}% of income` : 'No income logged yet'} onClick={() => go('transactions')} />
           <SummaryCard icon="Repeat" tone="violet" label="Active Subscriptions" value={String(s.subs.length)} sub={`${fmt(s.subsMonthly)}/mo\n${fmt(s.subsMonthly * 12, true)}/yr`} onClick={() => go('budget', 'bills')} />
         </div>
@@ -568,22 +571,67 @@
             ))}
         </Card>
 
-        <SectionTitle>Top spending</SectionTitle>
-        <Card className="p-4 space-y-3">
-          {s.topCats.length === 0 ? <p className="text-sm text-slate-500">No expenses this month yet.</p> :
-            s.topCats.slice(0, 5).map(([cat, amt]) => (
-              <div key={cat}>
-                <div className="flex justify-between text-sm mb-1"><span>{cat}</span><span className="num font-medium">{fmt(amt)}</span></div>
-                <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-2 rounded-full bg-slate-700 dark:bg-slate-300" style={{ width: `${(amt / maxCat) * 100}%` }} /></div>
-              </div>
-            ))}
-        </Card>
+        <SpendingBreakdown />
 
         <SectionTitle action={<button className="text-sm font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('transactions')}>See all</button>}>Recent</SectionTitle>
         <Card className="divide-y divide-slate-100 dark:divide-slate-800">
           {recent.length === 0 ? <p className="p-4 text-sm text-slate-500">No transactions yet.</p> : recent.map((t) => <TxRow key={t.id} t={t} />)}
         </Card>
       </div>
+    );
+  }
+
+  /* ======================================= SPENDING BY ACCOUNT TYPE */
+  const ACCOUNT_FILTERS = [{ value: 'all', label: 'All' }, { value: 'bank', label: 'Bank Accounts' }, { value: 'credit', label: 'Credit Cards' }];
+  const SEG_COLOR = { credit: 'bg-violet-500', bank: 'bg-sky-500', other: 'bg-slate-400 dark:bg-slate-500' };
+
+  function SpendingBreakdown() {
+    const { data, fmt } = useApp();
+    const [month, setMonth] = useState(monthKey(todayISO()));
+    const [view, setView] = useState('all');
+    const agg = useMemo(() => {
+      const by = {}; const tot = { bank: 0, credit: 0, other: 0 };
+      data.transactions.filter((t) => t.type === 'expense' && monthKey(t.date) === month).forEach((t) => {
+        const k = acctTypeOf(t) || 'other';
+        const c = (by[t.category] ||= { bank: 0, credit: 0, other: 0 });
+        c[k] += t.amount; tot[k] += t.amount;
+      });
+      return { cats: Object.entries(by).map(([cat, v]) => ({ cat, ...v, total: v.bank + v.credit + v.other })), tot };
+    }, [data.transactions, month]);
+    const val = (c) => (view === 'all' ? c.total : c[view]);
+    const rows = agg.cats.filter((c) => val(c) > 0.004).sort((a, b) => val(b) - val(a));
+    const max = rows.length ? val(rows[0]) : 1;
+    const all = agg.tot.bank + agg.tot.credit + agg.tot.other;
+    const share = (k) => (all > 0 ? Math.round((agg.tot[k] / all) * 100) : 0);
+
+    return (
+      <>
+        <SectionTitle action={<div className="flex items-center gap-1">
+          <button className="w-7 h-7 grid place-items-center rounded-lg text-slate-500" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" size={16} /></button>
+          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 w-[72px] text-center">{monthLabel(month, { month: 'short', year: 'numeric' })}</span>
+          <button className="w-7 h-7 grid place-items-center rounded-lg text-slate-500" onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" size={16} /></button>
+        </div>}>Spending by account</SectionTitle>
+        <Card className="p-4">
+          <Segmented value={view} onChange={setView} options={ACCOUNT_FILTERS} />
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <div className="rounded-xl bg-violet-50 dark:bg-violet-500/10 p-3"><p className="text-xs text-violet-700 dark:text-violet-300 inline-flex items-center gap-1"><Icon name="CreditCard" size={13} />Credit cards</p><p className="num font-bold">{fmt(agg.tot.credit)}</p><p className="text-[11px] text-slate-500">{share('credit')}% of spending</p></div>
+            <div className="rounded-xl bg-sky-50 dark:bg-sky-500/10 p-3"><p className="text-xs text-sky-700 dark:text-sky-300 inline-flex items-center gap-1"><Icon name="Landmark" size={13} />Bank accounts</p><p className="num font-bold">{fmt(agg.tot.bank)}</p><p className="text-[11px] text-slate-500">{share('bank')}% of spending</p></div>
+          </div>
+          {agg.tot.other > 0.004 && <p className="text-xs text-slate-500 mt-2">Plus {fmt(agg.tot.other)} not linked to an account (manual entries).</p>}
+          <div className="mt-4 space-y-3">
+            {rows.length === 0 ? <p className="text-sm text-slate-500">No {view === 'bank' ? 'bank ' : view === 'credit' ? 'credit card ' : ''}spending in {monthLabel(month, { month: 'long' })}.</p> :
+              rows.slice(0, 8).map((c) => (
+                <div key={c.cat}>
+                  <div className="flex justify-between text-sm mb-1"><span>{c.cat}</span><span className="num font-medium">{fmt(val(c))}</span></div>
+                  <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
+                    {(view === 'all' ? ['credit', 'bank', 'other'] : [view]).map((k) => c[k] > 0 && <div key={k} className={SEG_COLOR[k]} style={{ width: `${(c[k] / max) * 100}%` }} />)}
+                  </div>
+                  {view === 'all' && c.credit > 0 && c.bank > 0 && <p className="num text-[11px] text-slate-500 mt-1">Cards {fmt(c.credit)} · Bank {fmt(c.bank)}</p>}
+                </div>
+              ))}
+          </div>
+        </Card>
+      </>
     );
   }
 
@@ -691,32 +739,48 @@
   /* ========================================================= TRANSACTIONS */
   function TxRow({ t, onClick }) {
     const { fmt } = useApp();
-    const income = t.type === 'income';
+    const moneyIn = isMoneyIn(t), transfer = t.type === 'transfer', income = t.type === 'income', card = acctTypeOf(t) === 'credit';
+    const icon = transfer ? 'ArrowLeftRight' : income ? 'ArrowDownLeft' : card ? 'CreditCard' : 'ArrowUpRight';
+    const tone = income ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
+      : transfer ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
+      : card ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
     return (
       <button onClick={onClick} className="w-full flex items-center gap-3 p-3.5 text-left active:bg-slate-50 dark:active:bg-slate-800/50">
-        <div className={cls('w-10 h-10 rounded-xl grid place-items-center shrink-0', income ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300')}>
-          <Icon name={income ? 'ArrowDownLeft' : 'ArrowUpRight'} size={18} />
-        </div>
+        <div className={cls('w-10 h-10 rounded-xl grid place-items-center shrink-0', tone)}><Icon name={icon} size={18} /></div>
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{t.description || t.category}</p>
-          <p className="text-xs text-slate-500 truncate">{t.category} · {prettyDate(t.date)}</p>
+          <p className="text-xs text-slate-500 truncate">{[t.category, t.accountName, prettyDate(t.date)].filter(Boolean).join(' · ')}</p>
         </div>
-        <p className={cls('num font-semibold', income && 'text-emerald-600 dark:text-emerald-400')}>{income ? '+' : '−'}{fmt(t.amount)}</p>
+        <p className={cls('num font-semibold', income && 'text-emerald-600 dark:text-emerald-400', transfer && 'text-slate-500 dark:text-slate-400')}>{moneyIn ? '+' : '−'}{fmt(t.amount)}</p>
       </button>
     );
   }
 
   function TxForm({ initial, onDone }) {
-    const { save, remove, toast } = useApp();
-    const [f, setF] = useState(() => initial || { type: 'expense', amount: '', category: 'Groceries', date: todayISO(), description: '' });
+    const { data, save, remove, toast } = useApp();
+    const [f, setF] = useState(() => initial || { type: 'expense', amount: '', category: 'Groceries', date: todayISO(), description: '', accountType: null, accountName: '' });
     const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target ? e.target.value : e }));
-    const cats = f.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
-    useEffect(() => { if (!cats.includes(f.category)) setF((p) => ({ ...p, category: cats[0] })); }, [f.type]);
+    const credit = f.accountType === 'credit';
+    const cats = f.type === 'income' ? INCOME_CATEGORIES : f.type === 'transfer' ? TRANSFER_CATEGORIES : EXPENSE_CATEGORIES;
+    useEffect(() => { if (!cats.includes(f.category)) setF((p) => ({ ...p, category: p.type === 'transfer' && credit ? 'Card Payment' : cats[0] })); }, [f.type, f.accountType]);
+    const acctOptions = [{ value: '', label: 'No account (cash / other)' },
+      ...data.accounts.filter(isBankAccount).map((a) => ({ value: `bank|${a.name}`, label: `${a.name} · bank` })),
+      ...data.debts.filter(isCardDebt).map((d) => ({ value: `credit|${d.name}`, label: `${d.name} · card` }))];
+    const acctValue = f.accountType ? `${f.accountType}|${f.accountName}` : '';
+    const pickAccount = (e) => {
+      const [kind, ...rest] = e.target.value.split('|');
+      setF((p) => ({ ...p, accountType: kind || null, accountName: rest.join('|'), ...(kind === 'credit' && p.type === 'income' ? { type: 'transfer', direction: 'in' } : {}) }));
+    };
+    // On a credit card: charges raise what you owe; payments and refunds are balance adjustments that lower it.
+    const typeOptions = credit
+      ? [{ value: 'expense', label: 'Charge' }, { value: 'transfer', label: 'Payment / Credit' }]
+      : [{ value: 'expense', label: 'Expense' }, { value: 'income', label: 'Income' }, { value: 'transfer', label: 'Transfer' }];
     const submit = async (e) => {
       e.preventDefault();
       const amount = round2(Math.abs(parseAmount(f.amount)));
       if (!amount) return toast('Enter an amount', 'error');
-      const rec = { ...f, amount, source: f.source || 'manual' };
+      const direction = f.type === 'expense' ? 'out' : f.type === 'income' ? 'in' : credit ? 'in' : (f.direction || 'out');
+      const rec = { ...f, amount, direction, accountType: f.accountType || null, accountName: f.accountName || '', source: f.source || 'manual' };
       rec.hash = hashTx(rec);
       await save('transactions', rec);
       toast(initial ? 'Transaction updated' : 'Transaction added');
@@ -724,11 +788,13 @@
     };
     return (
       <form onSubmit={submit} className="space-y-4">
-        <Segmented value={f.type} onChange={set('type')} options={[{ value: 'expense', label: 'Expense' }, { value: 'income', label: 'Income' }]} />
+        <Field label="Account"><Select options={acctOptions} value={acctOptions.some((o) => o.value === acctValue) ? acctValue : ''} onChange={pickAccount} /></Field>
+        <Segmented value={f.type} onChange={set('type')} options={typeOptions} />
+        {f.type === 'transfer' && !credit && <Field label="Direction"><Select options={[{ value: 'out', label: 'Out of this account' }, { value: 'in', label: 'Into this account' }]} value={f.direction || 'out'} onChange={set('direction')} /></Field>}
         <Field label="Amount"><Input inputMode="decimal" placeholder="0.00" value={f.amount} onChange={set('amount')} autoFocus={!initial} /></Field>
         <Field label="Description"><Input placeholder="e.g. Farmers market" value={f.description} onChange={set('description')} /></Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Category"><Select options={cats} value={f.category} onChange={set('category')} /></Field>
+          <Field label="Category"><Select options={cats.includes(f.category) ? cats : [f.category, ...cats]} value={f.category} onChange={set('category')} /></Field>
           <Field label="Date"><Input type="date" value={f.date} onChange={set('date')} /></Field>
         </div>
         <Button type="submit" className="w-full">{initial ? 'Save changes' : 'Add transaction'}</Button>
@@ -742,13 +808,15 @@
     const [month, setMonth] = useState(monthKey(todayISO()));
     const [q, setQ] = useState('');
     const [type, setType] = useState('all');
+    const [acct, setAcct] = useState('all');
     const [editing, setEditing] = useState(null); // null | 'new' | tx
 
     const list = useMemo(() => data.transactions
       .filter((t) => monthKey(t.date) === month)
       .filter((t) => type === 'all' || t.type === type)
-      .filter((t) => !q || `${t.description} ${t.category}`.toLowerCase().includes(q.toLowerCase()))
-      .sort((a, b) => b.date.localeCompare(a.date)), [data.transactions, month, q, type]);
+      .filter((t) => acct === 'all' || acctTypeOf(t) === acct)
+      .filter((t) => !q || `${t.description} ${t.category} ${t.accountName || ''}`.toLowerCase().includes(q.toLowerCase()))
+      .sort((a, b) => b.date.localeCompare(a.date)), [data.transactions, month, q, type, acct]);
     const groups = useMemo(() => list.reduce((g, t) => ((g[t.date] ||= []).push(t), g), {}), [list]);
     const totIn = list.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const totOut = list.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
@@ -764,16 +832,17 @@
           <button className="w-10 h-10 grid place-items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><Icon name="ChevronLeft" /></button>
           <div className="text-center">
             <p className="font-semibold">{monthLabel(month)}</p>
-            <p className="num text-xs text-slate-500"><span className="text-emerald-600 dark:text-emerald-400">+{fmt(totIn, true)}</span> · −{fmt(totOut, true)}</p>
+            <p className="num text-xs text-slate-500"><span className="text-emerald-600 dark:text-emerald-400">+{fmt(totIn, true)}</span> · −{fmt(totOut, true)}{list.some((t) => t.type === 'transfer') ? ' · transfers excluded' : ''}</p>
           </div>
           <button className="w-10 h-10 grid place-items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800" onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><Icon name="ChevronRight" /></button>
         </div>
 
         <div className="relative mt-3">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Icon name="Search" size={18} /></span>
-          <input className={cls(inputCls, 'pl-10')} placeholder="Search description or category" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className={cls(inputCls, 'pl-10')} placeholder="Search description, category or account" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <div className="mt-3"><Segmented value={type} onChange={setType} options={[{ value: 'all', label: 'All' }, { value: 'expense', label: 'Expenses' }, { value: 'income', label: 'Income' }]} /></div>
+        <div className="mt-3"><Segmented value={acct} onChange={setAcct} options={ACCOUNT_FILTERS} /></div>
+        <div className="mt-2"><Segmented value={type} onChange={setType} options={[{ value: 'all', label: 'All types' }, { value: 'expense', label: acct === 'credit' ? 'Charges' : 'Expenses' }, { value: 'income', label: 'Income' }, { value: 'transfer', label: acct === 'credit' ? 'Payments' : 'Transfers' }]} /></div>
 
         {list.length === 0 ? <Empty icon="Receipt" title="No transactions" body="Nothing matches this month and filter." action={<Button variant="secondary" onClick={() => setEditing('new')}>Add one</Button>} /> :
           Object.entries(groups).map(([date, items]) => (
@@ -793,135 +862,211 @@
   }
 
   /* =============================================================== UPLOAD */
+  const KIND_INFO = {
+    bank: { title: 'Bank Statement', sub: 'Checking or savings', icon: 'Landmark', placeholder: 'e.g. Chase Checking',
+      how: 'Deposits count as income, withdrawals as expenses. Transfers between your accounts and payments to credit cards are kept separate so nothing is counted twice.' },
+    credit: { title: 'Credit Card Statement', sub: 'Any card issuer', icon: 'CreditCard', placeholder: 'e.g. Amex Gold',
+      how: 'Purchases count as expenses and add to what you owe. Payments and refunds are balance adjustments that reduce the card balance; they are not income.' },
+  };
+  const UPLOAD_ERRORS = { PDF_NO_TEXT: 'scanned', PDF_PASSWORD: 'password' };
+
   function UploadView() {
-    const { data, bulk, toast, reload, fmt } = useApp();
-    const [csv, setCsv] = useState(null); // { name, headers, rows }
-    const [map, setMap] = useState({});
-    const [dateFmt, setDateFmt] = useState('auto');
-    const [invert, setInvert] = useState(false);
+    const { data, toast, reload, fmt, go } = useApp();
+    const [kind, setKind] = useState('bank');
+    const [name, setName] = useState('');
+    const [subtype, setSubtype] = useState('Checking');
+    const [job, setJob] = useState(null);       // { file, report } | { file, error }
+    const [password, setPassword] = useState('');
+    const [balance, setBalance] = useState('');
     const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState(null);
     const fileRef = useRef();
+
+    const existing = kind === 'bank' ? data.accounts.filter(isBankAccount) : data.debts.filter(isCardDebt);
+    const accountName = name.trim() || (kind === 'bank' ? subtype : 'Credit Card');
+    const known = existing.find((a) => sameName(a.name, accountName));
+
+    const parse = async (file, pw) => {
+      setBusy(true); setResult(null);
+      try {
+        const report = await StatementParser.parseStatementDetailed(file, { persist: false, accountType: kind, accountName, password: pw || undefined });
+        setJob({ file, report });
+        setBalance(report.meta.endingBalance != null ? String(report.meta.endingBalance) : '');
+      } catch (e) { setJob({ file, error: e }); }
+      setBusy(false);
+    };
+    // Signs depend on the statement type, so re-read the file if the user switches type.
+    useEffect(() => { if (job && job.report) parse(job.file, password); }, [kind]);
 
     const handleFile = async (file) => {
       if (!file) return;
-      const text = await file.text();
       if (file.name.toLowerCase().endsWith('.json')) {
         try {
-          const json = JSON.parse(text);
+          const json = JSON.parse(await file.text());
           const replace = confirm('Restore backup?\n\nOK = replace all current data\nCancel = merge into current data');
           const n = await DB.importAll(json, { replace });
-          await reload();
-          toast(`Restored ${n} records`);
+          await reload(); toast(`Restored ${n} records`);
         } catch (e) { toast(e.message, 'error'); }
         return;
       }
-      const rows = parseCSV(text);
-      if (rows.length < 2) return toast('CSV looks empty', 'error');
-      const headers = rows[0].map((h, i) => h.trim() || `Column ${i + 1}`);
-      const find = (re) => headers.findIndex((h) => re.test(h));
-      const debit = find(/debit|withdraw|money out|paid out/i);
-      const credit = find(/credit|deposit|money in|paid in/i);
-      setMap({
-        date: find(/date|posted/i),
-        description: find(/desc|payee|merchant|name|memo|details/i),
-        // If the file splits debits/credits into two columns, don't use a single signed amount column.
-        amount: debit >= 0 && credit >= 0 ? -1 : find(/^amount$|amount|value|sum/i),
-        debit, credit,
-        category: find(/categ/i),
-      });
-      setCsv({ name: file.name, headers, rows: rows.slice(1) });
+      setPassword(''); parse(file);
     };
 
-    const parsed = useMemo(() => {
-      if (!csv) return [];
-      const existing = new Set(data.transactions.map((t) => t.hash));
-      return csv.rows.map((r) => {
-        const date = parseDateFlexible(r[map.date], dateFmt);
-        let amt = map.amount >= 0 ? parseAmount(r[map.amount]) : NaN;
-        if (isNaN(amt)) { const d = parseAmount(r[map.debit]); const c = parseAmount(r[map.credit]); amt = (isNaN(c) ? 0 : Math.abs(c)) - (isNaN(d) ? 0 : Math.abs(d)); }
-        if (invert) amt = -amt;
-        if (!date || isNaN(amt) || amt === 0) return null;
-        const type = amt > 0 ? 'income' : 'expense';
-        const description = (r[map.description] || '').trim();
-        const rawCat = map.category >= 0 ? (r[map.category] || '').trim() : '';
-        const cats = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
-        const category = cats.find((c) => c.toLowerCase() === rawCat.toLowerCase()) || guessCategory(description, type);
-        const tx = { type, amount: round2(Math.abs(amt)), date, description, category, source: 'csv' };
-        tx.hash = hashTx(tx); tx.dup = existing.has(tx.hash);
-        return tx;
-      }).filter(Boolean);
-    }, [csv, map, dateFmt, invert, data.transactions]);
-    const fresh = parsed.filter((t) => !t.dup);
+    // Preview: how each row will be stored, and which are already imported into this account.
+    const preview = useMemo(() => {
+      if (!job || !job.report) return null;
+      const have = new Map();
+      data.transactions.filter((t) => sameName(t.accountName, accountName)).forEach((t) => { const b = String(t.hash || '').split('#')[0]; have.set(b, (have.get(b) || 0) + 1); });
+      const seen = new Map();
+      const rows = job.report.transactions.map((t) => {
+        const b = StatementParser.hashTx(t.date, Math.abs(t.amount), t.description); const n = (seen.get(b) || 0) + 1; seen.set(b, n);
+        return { ...t, ...StatementParser.classify(t, kind), direction: t.amount < 0 ? 'out' : 'in', amount: Math.abs(t.amount), accountType: kind, accountName, dup: n <= (have.get(b) || 0) };
+      });
+      const fresh = rows.filter((r) => !r.dup);
+      const tally = (f) => { const l = fresh.filter(f); return { n: l.length, total: l.reduce((s, r) => s + r.amount, 0) }; };
+      return {
+        rows, fresh,
+        a: kind === 'bank' ? { label: 'Deposits (income)', ...tally((r) => r.type === 'income'), tone: 'text-emerald-600 dark:text-emerald-400' } : { label: 'Purchases & charges', ...tally((r) => r.type === 'expense'), tone: 'text-violet-700 dark:text-violet-300' },
+        b: kind === 'bank' ? { label: 'Withdrawals (expenses)', ...tally((r) => r.type === 'expense'), tone: '' } : { label: 'Payments & credits', ...tally((r) => r.type === 'transfer'), tone: 'text-emerald-600 dark:text-emerald-400' },
+        c: kind === 'bank' ? { label: 'Transfers & card payments', ...tally((r) => r.type === 'transfer') } : null,
+      };
+    }, [job, kind, accountName, data.transactions]);
 
     const doImport = async () => {
+      if (!preview) return;
       setBusy(true);
-      try { const n = await bulk('transactions', fresh.map(({ dup, ...t }) => t)); toast(`Imported ${n} transactions`); setCsv(null); }
-      catch (e) { toast(e.message, 'error'); }
+      try {
+        const { report, file } = job;
+        const acct = await ensureAccount(kind, accountName, subtype, data);
+        const saved = await StatementParser.saveTransactions(report.transactions, { sourceName: file.name, accountType: kind, accountName });
+        // Balance anchor: the statement's ending balance (or what the user typed) as of the statement date.
+        const bal = balance.trim() === '' ? null : parseAmount(balance);
+        const asOf = report.meta.endingBalanceDate || report.meta.statementEnd || report.meta.dateRange[1];
+        const patch = { ledger: true, kind };
+        if (bal != null && !isNaN(bal) && (!acct.anchorDate || asOf >= acct.anchorDate)) {
+          Object.assign(patch, { anchorBalance: round2(bal), anchorDate: asOf, balanceSource: report.meta.endingBalance != null && round2(bal) === round2(report.meta.endingBalance) ? 'statement' : 'manual' });
+        } else if (!acct.ledger && Number(acct.balance)) {
+          // An account you already tracked by hand: its current balance stays the starting point.
+          Object.assign(patch, { anchorBalance: Number(acct.balance), anchorDate: todayISO(), balanceSource: 'manual' });
+        } else if (acct.anchorBalance == null) patch.balanceSource = 'estimated';
+        await DB.put(kind === 'bank' ? 'accounts' : 'debts', { ...acct, ...patch });
+        await reload();
+        setResult({ ...saved, accountName, kind, needsApr: kind === 'credit' && !(Number(acct.apr) > 0) });
+        setJob(null); setBalance('');
+        toast(`Imported ${saved.inserted} into ${accountName}`);
+      } catch (e) { toast(e.message, 'error'); }
       setBusy(false);
     };
 
-    const colOpts = csv ? [{ value: -1, label: '— none —' }, ...csv.headers.map((h, i) => ({ value: i, label: h }))] : [];
-    const setCol = (k) => (e) => setMap((m) => ({ ...m, [k]: Number(e.target.value) }));
+    const info = KIND_INFO[kind];
+    const err = job && job.error;
 
     return (
       <div>
         <header className="pt-2">
           <h1 className="text-2xl font-bold tracking-tight">Upload</h1>
-          <p className="text-sm text-slate-500 mt-1">Bank CSV exports or a Centric Wealth backup (.json). Files are read in this browser and never uploaded anywhere.</p>
+          <p className="text-sm text-slate-500 mt-1">PDF or CSV statements, read on this device and never uploaded anywhere.</p>
         </header>
 
-        <input ref={fileRef} type="file" accept=".csv,.tsv,.txt,.json,text/csv,application/json" className="hidden" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ''; }} />
-        <button onClick={() => fileRef.current.click()}
+        <SectionTitle>1 · Statement type</SectionTitle>
+        <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Statement type">
+          {['bank', 'credit'].map((k) => {
+            const sel = kind === k, ki = KIND_INFO[k];
+            return (
+              <button key={k} role="radio" aria-checked={sel} onClick={() => { setKind(k); setName(''); }}
+                className={cls('rounded-2xl border-2 p-3.5 text-left transition-colors', sel ? (k === 'bank' ? 'border-sky-500 bg-sky-50 dark:bg-sky-500/10' : 'border-violet-500 bg-violet-50 dark:bg-violet-500/10') : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900')}>
+                <div className={cls('w-9 h-9 rounded-xl grid place-items-center mb-2', k === 'bank' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300' : 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300')}><Icon name={ki.icon} size={18} /></div>
+                <p className="font-semibold leading-tight">{ki.title}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{ki.sub}</p>
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-slate-500 mt-2 px-1">{info.how}</p>
+
+        <SectionTitle>2 · Account</SectionTitle>
+        <Card className="p-4 space-y-3">
+          <Field label="Account label (optional)" hint={known ? `Adds to your existing “${known.name}” account.` : `Creates a new ${kind === 'bank' ? 'bank account' : 'credit card'} called “${accountName}”.`}>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={info.placeholder} list={`acct-${kind}`} autoComplete="off" />
+            <datalist id={`acct-${kind}`}>{existing.map((a) => <option key={a.id} value={a.name} />)}</datalist>
+          </Field>
+          {existing.length > 0 && <div className="flex flex-wrap gap-1.5">{existing.map((a) => (
+            <button key={a.id} onClick={() => setName(a.name)} className={cls('text-xs font-medium px-2.5 py-1 rounded-full border', sameName(a.name, accountName) ? 'border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300')}>{a.name}</button>
+          ))}</div>}
+          {kind === 'bank' && !known && <Field label="Account type"><Select options={['Checking', 'Savings']} value={subtype} onChange={(e) => setSubtype(e.target.value)} /></Field>}
+        </Card>
+
+        <SectionTitle>3 · File</SectionTitle>
+        <input ref={fileRef} type="file" accept=".pdf,.csv,.tsv,.txt,.json,application/pdf,text/csv,application/json" className="hidden" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ''; }} />
+        <button onClick={() => fileRef.current.click()} disabled={busy}
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
-          className="mt-4 w-full rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-8 text-center active:bg-slate-50 dark:active:bg-slate-800">
-          <div className="mx-auto w-12 h-12 rounded-2xl grid place-items-center bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400"><Icon name="FileSpreadsheet" size={24} /></div>
-          <p className="font-semibold mt-3">{csv ? csv.name : 'Choose a file'}</p>
-          <p className="text-xs text-slate-500 mt-1">CSV · TSV · JSON backup</p>
+          className="w-full rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-7 text-center active:bg-slate-50 dark:active:bg-slate-800">
+          <div className="mx-auto w-12 h-12 rounded-2xl grid place-items-center bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400"><Icon name={busy ? 'Hourglass' : 'FileSpreadsheet'} size={24} /></div>
+          <p className="font-semibold mt-3">{busy ? 'Reading statement…' : job ? job.file.name : `Choose a ${kind === 'bank' ? 'bank' : 'credit card'} statement`}</p>
+          <p className="text-xs text-slate-500 mt-1">PDF · CSV · or a Centric Wealth backup (.json)</p>
         </button>
 
-        {csv && (
-          <>
-            <SectionTitle>Map columns</SectionTitle>
-            <Card className="p-4 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Date"><Select options={colOpts} value={map.date} onChange={setCol('date')} /></Field>
-                <Field label="Description"><Select options={colOpts} value={map.description} onChange={setCol('description')} /></Field>
-                <Field label="Amount (signed)"><Select options={colOpts} value={map.amount} onChange={setCol('amount')} /></Field>
-                <Field label="Category"><Select options={colOpts} value={map.category} onChange={setCol('category')} /></Field>
-                <Field label="Debit (if split)"><Select options={colOpts} value={map.debit} onChange={setCol('debit')} /></Field>
-                <Field label="Credit (if split)"><Select options={colOpts} value={map.credit} onChange={setCol('credit')} /></Field>
-              </div>
-              <Field label="Date format"><Select options={[{ value: 'auto', label: 'Auto-detect' }, { value: 'MDY', label: 'MM/DD/YYYY' }, { value: 'DMY', label: 'DD/MM/YYYY' }]} value={dateFmt} onChange={(e) => setDateFmt(e.target.value)} /></Field>
-              <label className="flex items-center justify-between gap-3 text-sm">
-                <span>Expenses are positive numbers in this file</span>
-                <input type="checkbox" className="w-5 h-5 accent-emerald-600" checked={invert} onChange={(e) => setInvert(e.target.checked)} />
-              </label>
-            </Card>
+        {err && (
+          <Card className="mt-3 p-4 border-rose-200 dark:border-rose-500/30">
+            <p className="font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2"><Icon name="TriangleAlert" size={16} />Couldn’t read this file</p>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{err.message}</p>
+            {err.code === 'PDF_PASSWORD' && (
+              <form className="flex gap-2 mt-3" onSubmit={(e) => { e.preventDefault(); parse(job.file, password); }}>
+                <input className={inputCls} type="password" placeholder="PDF password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+                <Button type="submit">Open</Button>
+              </form>
+            )}
+          </Card>
+        )}
 
-            <SectionTitle>Preview · {parsed.length} rows{parsed.length !== fresh.length ? ` · ${parsed.length - fresh.length} duplicates skipped` : ''}</SectionTitle>
-            <Card className="divide-y divide-slate-100 dark:divide-slate-800">
-              {parsed.slice(0, 6).map((t, i) => (
-                <div key={i} className={cls('flex items-center gap-3 p-3 text-sm', t.dup && 'opacity-40')}>
-                  <div className="flex-1 min-w-0"><p className="font-medium truncate">{t.description || '(no description)'}</p><p className="text-xs text-slate-500">{t.date} · {t.category}{t.dup ? ' · duplicate' : ''}</p></div>
-                  <p className={cls('num font-semibold', t.type === 'income' && 'text-emerald-600')}>{t.type === 'income' ? '+' : '−'}{fmt(t.amount)}</p>
-                </div>
-              ))}
-              {parsed.length === 0 && <p className="p-4 text-sm text-slate-500">No valid rows — check the date and amount columns.</p>}
+        {preview && (
+          <>
+            <SectionTitle>Preview · {accountName}</SectionTitle>
+            <Card className="p-4">
+              <div className={cls('grid gap-2', preview.c ? 'grid-cols-3' : 'grid-cols-2')}>
+                {[preview.a, preview.b, preview.c].filter(Boolean).map((x) => (
+                  <div key={x.label} className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-2.5"><p className="text-[11px] leading-tight text-slate-500">{x.label}</p><p className={cls('num font-bold mt-1', x.tone)}>{fmt(x.total, true)}</p><p className="text-[11px] text-slate-500">{x.n} item{x.n === 1 ? '' : 's'}</p></div>
+                ))}
+              </div>
+              <div className="mt-4">
+                <Field label={kind === 'bank' ? 'Ending balance' : 'Statement balance (amount owed)'}
+                  hint={job.report.meta.endingBalance != null ? `Found on the statement${job.report.meta.endingBalanceDate ? ` for ${prettyDate(job.report.meta.endingBalanceDate)}` : ''}. Newer transactions are added on top.` : 'Not found on the statement. Enter it for an exact balance, or leave blank to estimate from transactions.'}>
+                  <Input inputMode="decimal" placeholder="0.00" value={balance} onChange={(e) => setBalance(e.target.value)} />
+                </Field>
+              </div>
+              <p className="text-xs text-slate-500 mt-3">{preview.fresh.length} new · {preview.rows.length - preview.fresh.length} already imported{job.report.warnings.length ? ` · ${job.report.warnings.length} row${job.report.warnings.length === 1 ? '' : 's'} skipped` : ''} · {parseISO(job.report.meta.dateRange[0]).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – {parseISO(job.report.meta.dateRange[1]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</p>
             </Card>
+            <Card className="mt-3 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+              {preview.rows.slice(0, 8).map((t, i) => <div key={i} className={cls(t.dup && 'opacity-40')}><TxRow t={t} /></div>)}
+              {preview.rows.length > 8 && <p className="p-3 text-xs text-center text-slate-500">+ {preview.rows.length - 8} more</p>}
+            </Card>
+            {job.report.warnings.length > 0 && (
+              <details className="mt-2 text-xs text-slate-500 px-1"><summary className="cursor-pointer">Skipped rows</summary>
+                <ul className="mt-1 space-y-0.5">{job.report.warnings.slice(0, 20).map((w, i) => <li key={i}>{w.row ? `Row ${w.row}: ` : w.page ? `Page ${w.page}: ` : ''}{w.message}</li>)}</ul>
+              </details>
+            )}
             <div className="flex gap-2 mt-4">
-              <Button variant="secondary" className="flex-1" onClick={() => setCsv(null)}>Cancel</Button>
-              <Button className="flex-[2]" disabled={!fresh.length || busy} onClick={doImport}>Import {fresh.length}</Button>
+              <Button variant="secondary" className="flex-1" onClick={() => setJob(null)}>Cancel</Button>
+              <Button className="flex-[2]" disabled={busy || !preview.fresh.length} onClick={doImport}>{preview.fresh.length ? `Import ${preview.fresh.length} into ${accountName}` : 'Nothing new to import'}</Button>
             </div>
           </>
         )}
 
-        {!csv && (
+        {result && (
+          <Card className="mt-3 p-4 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20">
+            <p className="font-semibold flex items-center gap-2"><Icon name="CircleCheck" size={18} className="text-emerald-600" />Imported {result.inserted} into {result.accountName}</p>
+            {result.skippedDuplicates > 0 && <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{result.skippedDuplicates} already imported, skipped.</p>}
+            {result.needsApr && <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">Add this card’s APR and minimum payment so payoff plans are accurate. <button className="font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Open Debt</button></p>}
+          </Card>
+        )}
+
+        {!job && !result && (
           <>
             <SectionTitle>Tips</SectionTitle>
             <Card className="p-4 text-sm text-slate-600 dark:text-slate-300 space-y-2">
-              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Most banks offer “Download transactions → CSV” in online banking.</p>
-              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Re-importing the same file is safe — duplicates are detected and skipped.</p>
-              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Categories are guessed from descriptions; edit the rules in <code>CATEGORY_RULES</code>.</p>
+              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Download statements from your bank’s website as PDF or CSV. Scanned (photographed) PDFs can’t be read.</p>
+              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Importing the same statement again is safe: duplicates in that account are skipped.</p>
+              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Import both your bank and card statements: the card payment shows up on each, and both are stored as transfers so spending is only counted once.</p>
             </Card>
           </>
         )}
@@ -990,9 +1135,15 @@
       e.preventDefault();
       const amount = round2(parseAmount(pay.amount)); if (!amount) return;
       const d = data.debts.find((x) => x.id === pay.id);
-      await save('debts', { ...d, balance: round2(Math.max(0, d.balance - amount)) });
-      const tx = { type: 'expense', amount, category: 'Debt Payment', date: todayISO(), description: `Payment · ${d.name}`, source: 'debt', debtId: d.id };
-      tx.hash = hashTx(tx); await save('transactions', tx);
+      if (d.ledger && isCardDebt(d)) {
+        // Card tracked from statements: the payment is a balance adjustment on the card; the balance recalculates.
+        const tx = { type: 'transfer', direction: 'in', amount, category: 'Card Payment', date: todayISO(), description: `Payment · ${d.name}`, source: 'debt', accountType: 'credit', accountName: d.name };
+        tx.hash = hashTx(tx); await save('transactions', tx);
+      } else {
+        await save('debts', { ...d, balance: round2(Math.max(0, d.balance - amount)) });
+        const tx = { type: 'expense', amount, category: 'Debt Payment', date: todayISO(), description: `Payment · ${d.name}`, source: 'debt', debtId: d.id };
+        tx.hash = hashTx(tx); await save('transactions', tx);
+      }
       setPay(null); toast('Payment logged');
     };
 
@@ -1011,7 +1162,7 @@
               <div key={d.id} className="flex items-center gap-3 p-3.5">
                 <button className="flex-1 min-w-0 text-left flex items-center gap-3" onClick={() => setEdit({ ...d, balance: String(d.balance), apr: String(d.apr), minPayment: String(d.minPayment) })}>
                   <div className="w-10 h-10 rounded-xl grid place-items-center bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400"><Icon name="CreditCard" size={18} /></div>
-                  <div className="min-w-0"><p className="font-medium truncate">{d.name}</p><p className="num text-xs text-slate-500">{d.apr}% APR · min {fmt(d.minPayment)}</p></div>
+                  <div className="min-w-0"><p className="font-medium truncate">{d.name}</p><p className="num text-xs text-slate-500">{Number(d.apr) > 0 ? `${d.apr}% APR` : <span className="text-amber-600">APR not set</span>} · min {fmt(d.minPayment)}</p>{d.ledger && <p className="text-[11px] text-slate-400">{balanceNote(d)}</p>}</div>
                 </button>
                 <div className="text-right"><p className="num font-semibold">{fmt(d.balance)}</p><button className="text-xs font-semibold text-brand-700 dark:text-brand-400" onClick={() => setPay({ id: d.id, name: d.name, amount: String(d.minPayment || '') })}>Log payment</button></div>
               </div>
@@ -1038,7 +1189,7 @@
 
         <Sheet open={!!edit} title={edit?.id ? 'Edit debt' : 'New debt'} onClose={() => setEdit(null)}>
           {edit && (
-            <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!edit.name) return toast('Name it', 'error'); await save('debts', { ...edit, balance: round2(parseAmount(edit.balance) || 0), apr: Number(edit.apr) || 0, minPayment: round2(parseAmount(edit.minPayment) || 0) }); setEdit(null); toast('Debt saved'); }}>
+            <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!edit.name) return toast('Name it', 'error'); const bal = round2(parseAmount(edit.balance) || 0); const orig = data.debts.find((x) => x.id === edit.id); const balChanged = !orig || Math.abs(bal - Number(orig.balance)) > 0.004; await save('debts', { ...edit, balance: bal, apr: Number(edit.apr) || 0, minPayment: round2(parseAmount(edit.minPayment) || 0), ...(edit.ledger && balChanged ? { anchorBalance: bal, anchorDate: todayISO(), balanceSource: 'manual' } : {}) }); setEdit(null); toast('Debt saved'); }}>
               <Field label="Name"><Input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} placeholder="e.g. Visa card" /></Field>
               <Field label="Type"><Select options={DEBT_TYPES} value={edit.type} onChange={(e) => setEdit({ ...edit, type: e.target.value })} /></Field>
               <div className="grid grid-cols-3 gap-3">
@@ -1054,7 +1205,7 @@
         <Sheet open={!!pay} title={`Payment · ${pay?.name || ''}`} onClose={() => setPay(null)}>
           {pay && (
             <form className="space-y-4" onSubmit={submitPay}>
-              <Field label="Amount" hint="Reduces the balance and logs a Debt Payment expense."><Input inputMode="decimal" value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} autoFocus /></Field>
+              <Field label="Amount" hint={data.debts.find((x) => x.id === pay.id)?.ledger ? 'Recorded as a card payment (balance adjustment), not spending.' : 'Reduces the balance and logs a Debt Payment expense.'}><Input inputMode="decimal" value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} autoFocus /></Field>
               <Button type="submit" className="w-full">Log payment</Button>
             </form>
           )}
@@ -1138,7 +1289,11 @@
     const [edit, setEdit] = useState(null);
     return (
       <div>
-        <Card className="p-4 mt-4">
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <Card className="p-3.5"><p className="text-xs text-slate-500">Bank cash</p><p className="num font-bold">{fmt(s.bankBalance)}</p></Card>
+          <Card className="p-3.5"><p className="text-xs text-slate-500">Card debt</p><p className="num font-bold">{fmt(s.cardOwed)}</p></Card>
+        </div>
+        <Card className="p-4 mt-3">
           <p className="text-sm text-slate-500">Net worth</p>
           <p className="num text-2xl font-bold">{fmt(s.netWorth)}</p>
           <p className="num text-xs text-slate-500 mt-1">{fmt(s.assets)} assets − {fmt(s.liabilities)} debts</p>
@@ -1148,15 +1303,15 @@
           <Card className="divide-y divide-slate-100 dark:divide-slate-800">
             {data.accounts.map((a) => (
               <button key={a.id} className="w-full flex items-center gap-3 p-3.5 text-left" onClick={() => setEdit({ ...a, balance: String(a.balance) })}>
-                <div className="w-10 h-10 rounded-xl grid place-items-center bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"><Icon name="Wallet" size={18} /></div>
-                <div className="flex-1 min-w-0"><p className="font-medium truncate">{a.name}</p><p className="text-xs text-slate-500">{a.type}</p></div>
+                <div className={cls('w-10 h-10 rounded-xl grid place-items-center', isBankAccount(a) ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300')}><Icon name={isBankAccount(a) ? 'Landmark' : 'Wallet'} size={18} /></div>
+                <div className="flex-1 min-w-0"><p className="font-medium truncate">{a.name}</p><p className="text-xs text-slate-500">{a.type}{a.ledger ? ` · ${balanceNote(a)}` : ''}</p></div>
                 <p className="num font-semibold">{fmt(a.balance)}</p>
               </button>
             ))}
           </Card>}
         <Sheet open={!!edit} title={edit?.id ? 'Edit asset' : 'New asset'} onClose={() => setEdit(null)}>
           {edit && (
-            <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!edit.name) return toast('Name it', 'error'); await save('accounts', { ...edit, balance: round2(parseAmount(edit.balance) || 0) }); setEdit(null); toast('Saved'); }}>
+            <form className="space-y-4" onSubmit={async (e) => { e.preventDefault(); if (!edit.name) return toast('Name it', 'error'); const bal = round2(parseAmount(edit.balance) || 0); const orig = data.accounts.find((x) => x.id === edit.id); const balChanged = !orig || Math.abs(bal - Number(orig.balance)) > 0.004; await save('accounts', { ...edit, balance: bal, ...(edit.ledger && balChanged ? { anchorBalance: bal, anchorDate: todayISO(), balanceSource: 'manual' } : {}) }); setEdit(null); toast('Saved'); }}>
               <Field label="Name"><Input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} placeholder="e.g. Checking" /></Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Type"><Select options={ACCOUNT_TYPES} value={edit.type} onChange={(e) => setEdit({ ...edit, type: e.target.value })} /></Field>
@@ -1420,7 +1575,7 @@
     const exportJSON = async () => { download(`centric-wealth-backup-${todayISO()}.json`, JSON.stringify(await DB.exportAll(), null, 2), 'application/json'); setSetting('lastBackup', todayISO()); };
     const exportCSV = () => {
       const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const rows = [['Date', 'Type', 'Category', 'Description', 'Amount'], ...[...data.transactions].sort((a, b) => a.date.localeCompare(b.date)).map((t) => [t.date, t.type, t.category, t.description, (t.type === 'expense' ? -t.amount : t.amount).toFixed(2)])];
+      const rows = [['Date', 'Type', 'Category', 'Description', 'Amount', 'Account', 'Account type'], ...[...data.transactions].sort((a, b) => a.date.localeCompare(b.date)).map((t) => [t.date, t.type, t.category, t.description, (isMoneyIn(t) ? t.amount : -t.amount).toFixed(2), t.accountName || '', acctTypeOf(t) || ''])];
       download(`centric-wealth-transactions-${todayISO()}.csv`, rows.map((r) => r.map(esc).join(',')).join('\n'), 'text/csv');
     };
     const [notifyStatus, setNotifyStatus] = useState(null);
@@ -1504,12 +1659,24 @@
       tx.push({ type: 'expense', amount: m === 0 ? 12.99 : 9.99, category: 'Subscriptions', date: mk(m, 4), description: 'Fitness app membership' });
       tx.push({ type: 'expense', amount: 6.99, category: 'Subscriptions', date: mk(m, 9), description: 'Cloud photo storage' });
     }
+    // Spending on the card, income and bills through checking, one card payment a month (a transfer on both sides).
+    const ON_CARD = new Set(['Groceries', 'Dining', 'Transport', 'Subscriptions']);
+    tx.forEach((t) => Object.assign(t, ON_CARD.has(t.category) ? { accountType: 'credit', accountName: 'Visa Card' } : { accountType: 'bank', accountName: 'Checking' }, { direction: t.type === 'income' ? 'in' : 'out' }));
+    for (let m = 2; m >= 1; m--) {
+      tx.push({ type: 'transfer', direction: 'out', amount: 640, category: 'Card Payment', date: mk(m, 25), description: 'Payment to Visa Card', accountType: 'bank', accountName: 'Checking' });
+      tx.push({ type: 'transfer', direction: 'in', amount: 640, category: 'Card Payment', date: mk(m, 25), description: 'Payment - thank you', accountType: 'credit', accountName: 'Visa Card' });
+    }
     tx.forEach((t) => (t.hash = hashTx(t), t.source = 'sample'));
+    const today = toISO(now);
     return {
       transactions: tx,
-      accounts: [{ name: 'Checking', type: 'Checking', balance: 4210.55 }, { name: 'High-yield savings', type: 'Savings', balance: 12500 }, { name: 'Retirement', type: 'Retirement', balance: 28400 }],
+      accounts: [
+        { name: 'Checking', type: 'Checking', kind: 'bank', balance: 4210.55, ledger: true, anchorBalance: 4210.55, anchorDate: today, balanceSource: 'manual' },
+        { name: 'High-yield savings', type: 'Savings', kind: 'bank', balance: 12500 },
+        { name: 'Retirement', type: 'Retirement', balance: 28400 },
+      ],
       debts: [
-        { name: 'Credit card', type: 'Credit Card', balance: 3840, apr: 24.99, minPayment: 95 },
+        { name: 'Visa Card', type: 'Credit Card', kind: 'credit', balance: 3840, apr: 24.99, minPayment: 95, ledger: true, anchorBalance: 3840, anchorDate: today, balanceSource: 'manual' },
         { name: 'Auto loan', type: 'Auto Loan', balance: 11200, apr: 6.4, minPayment: 310 },
         { name: 'Student loan', type: 'Student Loan', balance: 18750, apr: 4.99, minPayment: 210 },
       ],
@@ -1562,6 +1729,22 @@
       const apply = () => { const t = data.settings.theme || 'system'; document.documentElement.classList.toggle('dark', t === 'dark' || (t === 'system' && mq.matches)); };
       apply(); mq.addEventListener('change', apply); return () => mq.removeEventListener('change', apply);
     }, [data.settings.theme]);
+
+    // Imported ("ledger") accounts: balance = anchor + newer tagged transactions. Recalculated when data changes.
+    useEffect(() => {
+      if (!ready) return;
+      (async () => {
+        let changed = false;
+        for (const [storeName, list, kind] of [['accounts', data.accounts, 'bank'], ['debts', data.debts, 'credit']]) {
+          for (const a of list) {
+            if (!a.ledger) continue;
+            const b = ledgerBalance(a, kind, data.transactions);
+            if (Math.abs(b - (Number(a.balance) || 0)) > 0.004) { await DB.put(storeName, { ...a, balance: b }); changed = true; }
+          }
+        }
+        if (changed) store.reload(['accounts', 'debts']);
+      })().catch((e) => console.warn('Balance update failed', e));
+    }, [ready, data.transactions, data.accounts, data.debts]);
 
     // Recurring subscriptions & bills: detected locally from saved transactions (recurring-scanner.js)
     const decisionsJSON = JSON.stringify(data.settings.recurringDecisions || {});

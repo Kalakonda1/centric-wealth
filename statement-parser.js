@@ -13,6 +13,9 @@
  *   // -> [{ date:'2026-10-02', description:'Whole Foods', amount:-84.2, category:'Groceries', isRecurring:false }, ...]
  *
  *   const report = await StatementParser.parseStatementDetailed(file);
+ *
+ *   // Tell it what kind of statement it is and which account it belongs to:
+ *   await StatementParser.parseStatement(file, { accountType: 'credit', accountName: 'Amex Gold' });
  *   // -> { transactions, recurring, warnings, meta, saved }
  *
  * Sign convention: amount < 0 = money out (purchase, bill, fee); amount > 0 = money in.
@@ -205,12 +208,12 @@
    * case-insensitively, against the cleaned description.
    * ==================================================================== */
   const RULES = [
-    { category: 'Transfers', patterns: [/payment\s*[-\u2013]?\s*thank\s*you/i, /\b(?:to|from)\s+(?:chk|sav|checking|savings)\b/i], keywords: ['payment thank you', 'autopay payment', 'online payment thank', 'credit card payment', 'card payment', 'transfer to', 'transfer from', 'online transfer', 'xfer', 'zelle', 'venmo', 'cash app', 'paypal transfer', 'internal transfer', 'savings transfer', 'directpay', 'autopay'] },
+    { category: 'Transfers', patterns: [/payment\s*[-\u2013]?\s*thank\s*you/i, /\b(?:to|from)\s+(?:chk|sav|checking|savings)\b/i], keywords: ['payment thank you', 'autopay payment', 'online payment thank', 'credit card payment', 'card payment', 'transfer to', 'transfer from', 'online transfer', 'xfer', 'zelle', 'venmo', 'cash app', 'paypal transfer', 'internal transfer', 'savings transfer', 'directpay', 'autopay', 'epayment', 'e-payment', 'crd autopay', 'credit crd', 'card pmt', 'online pmt', 'applecard', 'amex epayment', 'card services', 'cardmember serv'] },
     { category: 'Income', sign: 'in', keywords: ['payroll', 'direct dep', 'direct deposit', 'salary', 'paycheck', 'adp', 'gusto', 'paychex', 'irs treas', 'tax refund', 'interest paid', 'interest earned', 'dividend', 'unemployment', 'social security', 'ssa treas', 'pension'] },
     { category: 'Refunds', sign: 'in', keywords: ['refund', 'return credit', 'reversal', 'chargeback', 'cashback', 'cash back reward', 'statement credit', 'rebate', 'return'] },
     { category: 'Subscriptions', keywords: ['netflix', 'spotify', 'hulu', 'disney plus', 'disneyplus', 'disney+', 'hbo max', 'max.com', 'paramount', 'peacock', 'youtube premium', 'youtube', 'apple services', 'icloud', 'apple music', 'apple tv', 'amazon prime', 'prime video', 'audible', 'kindle unlimited', 'siriusxm', 'pandora', 'tidal', 'dropbox', 'google storage', 'google one', 'microsoft 365', 'office 365', 'adobe', 'canva', 'notion', 'chatgpt', 'openai', 'patreon', 'onlyfans', 'substack', 'nytimes', 'new york times', 'wsj', 'washington post', 'medium.com', 'duolingo', 'headspace', 'calm.com', 'peloton', 'planet fitness', 'la fitness', 'gym', 'xbox game pass', 'playstation plus', 'nintendo online', 'twitch', 'crunchyroll', 'masterclass', 'linkedin premium', 'nordvpn', 'expressvpn', 'surfshark', '1password', 'lastpass', 'subscription', 'membership', 'monthly plan'] },
     { category: 'Utilities', keywords: ['electric', 'power company', 'energy', 'duke energy', 'fpl', 'pg&e', 'con ed', 'coned', 'water', 'sewer', 'gas company', 'natural gas', 'utility', 'utilities', 'waste management', 'trash', 'comcast', 'xfinity', 'spectrum', 'cox comm', 'verizon', 'at&t', 'att', 't-mobile', 'tmobile', 'sprint', 'mint mobile', 'cricket', 'boost mobile', 'google fi', 'frontier', 'centurylink', 'internet', 'broadband'] },
-    { category: 'Groceries', keywords: ['grocery', 'groceries', 'supermarket', 'whole foods', 'wholefds', 'trader joe', 'kroger', 'publix', 'safeway', 'albertsons', 'aldi', 'lidl', 'wegmans', 'heb', 'h-e-b', 'food lion', 'giant eagle', 'stop & shop', 'winn-dixie', 'winn dixie', 'sprouts', 'meijer', 'costco', 'sams club', "sam's club", 'bjs wholesale', 'instacart', 'fresh market', 'food 4 less', 'ralphs', 'vons', 'smart & final', 'market basket', 'save a lot', 'piggly wiggly', 'hy-vee', 'tesco', 'sainsbury', 'walmart grocery'] },
+    { category: 'Groceries', keywords: ['grocery', 'groceries', 'supermarket', 'whole foods', 'wholefds', 'trader joe', 'trader joes', 'kroger', 'publix', 'safeway', 'albertsons', 'aldi', 'lidl', 'wegmans', 'heb', 'h-e-b', 'food lion', 'giant eagle', 'stop & shop', 'winn-dixie', 'winn dixie', 'sprouts', 'meijer', 'costco', 'sams club', "sam's club", 'bjs wholesale', 'instacart', 'fresh market', 'food 4 less', 'ralphs', 'vons', 'smart & final', 'market basket', 'save a lot', 'piggly wiggly', 'hy-vee', 'tesco', 'sainsbury', 'walmart grocery'] },
     { category: 'Dining Out', keywords: ['restaurant', 'cafe', 'coffee', 'starbucks', 'dunkin', 'mcdonald', 'burger king', 'wendy', 'taco bell', 'chipotle', 'subway', 'chick-fil-a', 'chickfila', 'popeyes', 'kfc', 'panera', 'domino', 'pizza', 'papa john', 'five guys', 'shake shack', 'in-n-out', 'sonic drive', 'dairy queen', 'panda express', 'olive garden', 'applebee', 'chili', 'ihop', 'denny', 'waffle house', 'cracker barrel', 'buffalo wild', 'sushi', 'grill', 'bistro', 'diner', 'kitchen', 'tavern', 'pub', 'brewery', 'bakery', 'doordash', 'uber eats', 'ubereats', 'grubhub', 'postmates', 'seamless', 'caviar'], patterns: [/^tst\s?\*/i] },
     { category: 'Transport', keywords: ['uber', 'lyft', 'taxi', 'cab', 'shell', 'exxon', 'mobil', 'chevron', 'bp', 'sunoco', 'marathon', 'speedway', 'wawa', 'sheetz', 'circle k', 'racetrac', 'quiktrip', 'qt', 'valero', 'citgo', '76', 'arco', 'gas station', 'fuel', 'parking', 'parkmobile', 'toll', 'e-zpass', 'ezpass', 'sunpass', 'fastrak', 'metro', 'transit', 'mta', 'bart', 'amtrak', 'greyhound', 'jiffy lube', 'auto repair', 'autozone', "o'reilly", 'advance auto', 'car wash', 'dmv'] },
     { category: 'Housing', keywords: ['rent', 'mortgage', 'landlord', 'property mgmt', 'property management', 'apartments', 'hoa', 'home depot', "lowe's", 'lowes', 'menards', 'ace hardware', 'hardware'] },
@@ -279,7 +282,7 @@
     const all = [
       ...history.map((t) => ({ ...t, _batch: false })),
       ...transactions.map((t, i) => ({ ...t, _batch: true, _i: i })),
-    ].filter((t) => t.date && isFinite(t.amount) && t.amount !== 0);
+    ].filter((t) => t.date && isFinite(t.amount) && t.amount !== 0 && t.category !== 'Transfers' && t.type !== 'transfer');
 
     const byKey = new Map();
     for (const t of all) {
@@ -595,7 +598,14 @@
       if (amt.value === 0) continue;
       out.push({ date, rawDescription: description, amount: round2(sign * amt.value) });
     }
-    return { rows: out, meta: { statementType: type, dateOrder: order, statementEnd: toISO(ref) } };
+    // Statement balance: "New Balance" on card statements (amount owed), "Ending/Closing Balance" on bank statements.
+    const balRe = type === 'credit'
+      ? new RegExp('\\bnew\\s+balance\\b[^\\n\\d$(\\-]{0,40}(' + MONEY_SRC + ')', 'i')
+      : new RegExp('\\b(?:ending|closing)\\s+(?:ledger\\s+)?balance\\b[^\\n\\d$(\\-]{0,40}(' + MONEY_SRC + ')', 'i');
+    const bm = text.match(balRe);
+    let endingBalance = null;
+    if (bm) { const v = parseMoney(bm[1]); if (v) endingBalance = (v.explicitSign < 0 || v.cr) ? -v.value : v.value; }
+    return { rows: out, meta: { statementType: type, dateOrder: order, statementEnd: toISO(ref), endingBalance, endingBalanceDate: endingBalance != null ? toISO(ref) : null } };
   }
 
   /* ======================================================================
@@ -649,6 +659,7 @@
     cols.amount = idx(H.amount, [cols.debit, cols.credit]);
     if (cols.debit >= 0 && cols.credit >= 0 && cols.amount >= 0 && /debit|credit/i.test(header[cols.amount])) cols.amount = -1;
     cols.description = idx(H.description, [cols.date, cols.amount, cols.debit, cols.credit, cols.type, cols.category]);
+    cols.balance = header.findIndex((h) => H.balance.test(h) && !/available/i.test(h));
     return cols;
   }
 
@@ -673,7 +684,7 @@
     return { date, amount, description, debit: -1, credit: -1, type: -1, category: -1 };
   }
 
-  async function parseCsvFile(file, { order: forcedOrder, invertAmounts, warn, onProgress }) {
+  async function parseCsvFile(file, { order: forcedOrder, invertAmounts, accountType, warn, onProgress }) {
     const Papa = await loadPapa();
     let res;
     try { res = await papaParseFile(Papa, file); }
@@ -727,14 +738,24 @@
       const descParts = cols.description >= 0 ? [r[cols.description]] : [];
       const rawDescription = String(descParts.join(' ') || '').trim();
       if (!rawDescription) { warn('MALFORMED_ROW', 'Empty description', { row: rowNo }); }
-      parsedRows.push({ date, rawDescription: rawDescription || '(no description)', amount: round2(amount), bankCategory: cols.category >= 0 ? String(r[cols.category] || '').trim() : '' });
+      const bal = cols.balance >= 0 ? parseMoney(r[cols.balance]) : null;
+      parsedRows.push({ date, rawDescription: rawDescription || '(no description)', amount: round2(amount), bankCategory: cols.category >= 0 ? String(r[cols.category] || '').trim() : '', balance: bal ? (bal.explicitSign < 0 ? -bal.value : bal.value) : null });
     });
 
-    // Credit-card exports often list purchases as positive numbers. Detect and flip.
+    // Sign convention out of here: negative = money out / card charge, positive = money in / card payment or credit.
     let inverted = false;
+    const isPay = (t) => CARD_PAYMENT_HINT.test(t.rawDescription) || /payment|credit/i.test(t.bankCategory || '');
     if (invertAmounts != null) inverted = !!invertAmounts;
-    else if (parsedRows.length >= 3) {
-      const isPay = (t) => CARD_PAYMENT_HINT.test(t.rawDescription) || /payment|credit/i.test(t.bankCategory || '');
+    else if (accountType === 'credit') {
+      // Issuers disagree (Chase: purchases negative; Amex/Discover: purchases positive).
+      // Whichever sign most non-payment rows carry is the "charge" sign.
+      const others = parsedRows.filter((t) => !isPay(t)), pay = parsedRows.filter(isPay);
+      const pos = others.filter((t) => t.amount > 0).length, neg = others.length - pos;
+      if (pos > neg) inverted = true;
+      else if (pos === neg && pay.length && pay.every((t) => t.amount < 0)) inverted = true;
+    } else if (accountType === 'bank') {
+      inverted = false; // bank exports: deposits positive, withdrawals negative (or split debit/credit columns)
+    } else if (parsedRows.length >= 3) {
       const pay = parsedRows.filter(isPay);
       const others = parsedRows.filter((t) => !isPay(t));
       const posShare = others.filter((t) => t.amount > 0).length / Math.max(1, others.length);
@@ -743,7 +764,15 @@
     }
     if (inverted) parsedRows.forEach((t) => { t.amount = -t.amount; });
 
-    return { rows: parsedRows, meta: { dateOrder: order, columns: cols, headerRow: hIdx >= 0 ? hIdx + 1 : null, amountsInverted: inverted, statementType: inverted ? 'credit' : 'bank' } };
+    // Ending balance from a running-balance column (newest row; files may be newest-first or oldest-first).
+    let endingBalance = null, endingBalanceDate = null;
+    const withBal = parsedRows.filter((t) => t.balance != null);
+    if (withBal.length) {
+      const newestFirst = withBal.length > 1 && withBal[0].date > withBal[withBal.length - 1].date;
+      const last = newestFirst ? withBal[0] : withBal[withBal.length - 1];
+      endingBalance = round2(accountType === 'credit' ? Math.abs(last.balance) : last.balance); endingBalanceDate = last.date;
+    }
+    return { rows: parsedRows, meta: { dateOrder: order, columns: cols, headerRow: hIdx >= 0 ? hIdx + 1 : null, amountsInverted: inverted, statementType: accountType || (inverted ? 'credit' : 'bank'), endingBalance, endingBalanceDate } };
   }
 
   /* ======================================================================
@@ -818,10 +847,33 @@
    * Save transactions, skipping ones already stored. Identical rows within one file (two $5 coffees
    * the same day) are kept: the nth copy gets a "#n" hash suffix and only extra copies are inserted.
    */
-  async function saveTransactions(transactions, { sourceName = '' } = {}) {
+  const CARD_PAY_OUT = /card|crd|amex|american\s+express|discover|capital\s+one|citi|barclay|synchrony|apple\s*card|applecard|e-?payment|autopay|cardmember/i;
+
+  /**
+   * How a statement row is stored in the app, by account type:
+   *   bank:   deposit -> income, withdrawal -> expense, moves between own accounts -> transfer
+   *           (a payment to a credit card is a transfer "Card Payment", so spending isn't counted twice)
+   *   credit: charge -> expense (raises the amount owed); payment / refund / statement credit ->
+   *           transfer "Card Payment" / "Card Credit" (a balance adjustment that lowers the amount owed)
+   */
+  function classify(t, accountType) {
+    const out = t.amount < 0;
+    if (accountType === 'credit') {
+      if (out) return { type: 'expense', category: toAppCategory(t.category, t.amount, t.description) };
+      const isPayment = CARD_PAYMENT_HINT.test(t.description) || t.category === 'Transfers';
+      return { type: 'transfer', category: isPayment ? 'Card Payment' : 'Card Credit' };
+    }
+    if (t.category === 'Transfers') return { type: 'transfer', category: out && CARD_PAY_OUT.test(t.description) ? 'Card Payment' : 'Transfer' };
+    return { type: out ? 'expense' : 'income', category: toAppCategory(t.category, t.amount, t.description) };
+  }
+  const sameAccount = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+
+  async function saveTransactions(transactions, { sourceName = '', accountType = null, accountName = '' } = {}) {
+    if (accountType && accountType !== 'bank' && accountType !== 'credit') fail('UNSUPPORTED_TYPE', 'accountType must be "bank" or "credit".');
     const existing = await getStoredTransactions();
     const have = new Map();
-    for (const t of existing) { const base = String(t.hash || '').split('#')[0]; if (base) have.set(base, (have.get(base) || 0) + 1); }
+    // Duplicates are checked within the same account, so the same $500 card payment can appear on both statements.
+    for (const t of existing) { if (!sameAccount(t.accountName, accountName)) continue; const base = String(t.hash || '').split('#')[0]; if (base) have.set(base, (have.get(base) || 0) + 1); }
     const seen = new Map();
     const now = new Date().toISOString();
     const records = [];
@@ -831,8 +883,8 @@
       if (n <= (have.get(base) || 0)) continue; // already imported
       records.push({
         // Transfers (card payments, moves between own accounts) get their own type so they don't inflate income/expense totals.
-        id: uid(), type: t.category === 'Transfers' ? 'transfer' : t.amount < 0 ? 'expense' : 'income', direction: t.amount < 0 ? 'out' : 'in', amount: round2(Math.abs(t.amount)),
-        category: t.category === 'Transfers' ? 'Transfers' : toAppCategory(t.category, t.amount, t.description), statementCategory: t.category,
+        id: uid(), ...classify(t, accountType || 'bank'), direction: t.amount < 0 ? 'out' : 'in', amount: round2(Math.abs(t.amount)),
+        statementCategory: t.category, accountType: accountType || null, accountName: String(accountName || '').trim(),
         date: t.date, description: t.description, isRecurring: t.isRecurring,
         source: 'statement', importedFrom: sourceName, hash: n === 1 ? base : `${base}#${n}`, createdAt: now, updatedAt: now,
       });
@@ -864,6 +916,8 @@
   /**
    * @param {File|Blob} file
    * @param {object} [options]
+   *   accountType    'bank' | 'credit'   how to read signs and how rows are stored (see classify)
+   *   accountName    label saved on every transaction, e.g. 'Chase Checking'
    *   persist        (true)   save to IndexedDB
    *   useHistory     (true)   include stored transactions when detecting recurring charges
    *   password       PDF password
@@ -876,6 +930,7 @@
    */
   async function parseStatementDetailed(file, options = {}) {
     const opts = { persist: true, useHistory: true, dateOrder: 'auto', statementType: 'auto', customRules: [], ...options };
+    if (opts.accountType === 'bank' || opts.accountType === 'credit') opts.statementType = opts.accountType;
     const warnings = [];
     const warn = (code, message, extra = {}) => {
       const w = { code, message, ...extra };
@@ -890,7 +945,7 @@
       if (truncated) warn('PDF_TRUNCATED', `Only the first ${config.maxPdfPages} pages were read.`);
       ({ rows, meta } = parsePdfLines(lines, { order: opts.dateOrder, statementType: opts.statementType, warn }));
     } else {
-      ({ rows, meta } = await parseCsvFile(file, { order: opts.dateOrder, invertAmounts: opts.invertAmounts, warn, onProgress: opts.onProgress }));
+      ({ rows, meta } = await parseCsvFile(file, { order: opts.dateOrder, invertAmounts: opts.invertAmounts, accountType: opts.accountType, warn, onProgress: opts.onProgress }));
     }
     if (!rows.length) fail('NO_TRANSACTIONS', `No transactions were found in "${file.name}". ${kind === 'pdf' ? 'The layout may not be supported \u2014 try the CSV download from your bank.' : 'Check that the file has date and amount columns.'}`, { warnings });
 
@@ -910,7 +965,7 @@
     let history = [];
     if (opts.useHistory) {
       try {
-        history = (await getStoredTransactions()).map((t) => ({ date: t.date, description: t.description, amount: (t.type === 'expense' || t.direction === 'out') ? -Math.abs(t.amount) : Math.abs(t.amount), category: t.statementCategory || t.category }));
+        history = (await getStoredTransactions()).map((t) => ({ date: t.date, description: t.description, amount: (t.type === 'expense' || t.direction === 'out') ? -Math.abs(t.amount) : Math.abs(t.amount), category: t.statementCategory || t.category, type: t.type }));
         // Don't count this same file twice if it was imported before.
         const batch = new Set(transactions.map((t) => `${t.date}|${round2(Math.abs(t.amount))}|${t.description.toLowerCase()}`));
         history = history.filter((t) => !batch.has(`${t.date}|${round2(Math.abs(t.amount))}|${String(t.description).toLowerCase()}`));
@@ -921,7 +976,7 @@
 
     let saved = null;
     if (opts.persist) {
-      try { saved = await saveTransactions(transactions, { sourceName: file.name }); }
+      try { saved = await saveTransactions(transactions, { sourceName: file.name, accountType: opts.accountType, accountName: opts.accountName }); }
       catch (e) { e.transactions = transactions; e.recurring = groups; e.warnings = warnings; throw e; }
     }
 
@@ -978,6 +1033,8 @@
     merchantKey,
     parseDateToken,
     parseMoney,
+    hashTx,
+    classify,
     saveTransactions,
     getStoredTransactions,
     RULES,

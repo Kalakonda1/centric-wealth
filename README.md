@@ -83,3 +83,23 @@ Everything is calculated on the device from IndexedDB data using standard formul
 - **Debt paydown:** a month-by-month simulation of avalanche (highest APR first) and snowball (smallest balance first) with rollover. It shows the payoff order, total interest and the debt-free date, and recommends the cheaper method. The Budget & Debt tab uses the same engine.
 
 Educational estimates, not financial advice.
+
+## Bank vs credit card statements
+On **Upload**, choose **Bank Statement** or **Credit Card Statement** and, optionally, give the account a label such as "Chase Checking" or "Amex Gold". Every imported transaction is saved with `accountType: 'bank' | 'credit'` and `accountName`.
+
+| | Bank statement | Credit card statement |
+|---|---|---|
+| Money in | Income (deposits) | **Balance adjustment** (payment, refund or statement credit) that lowers the amount owed; not income |
+| Money out | Expense (withdrawals) | Expense (charge) that raises the amount owed |
+| Card payment / own-account move | Transfer, not spending | Transfer |
+
+A card payment appears on both statements. Both copies are stored as transfers, so the money is only counted once, as the card charges.
+
+**Balances**
+- Bank accounts are stored with Assets and credit cards with Debts, so net worth, the payoff planner and the Advisor include them.
+- An imported account's balance starts from the statement's ending balance ("New Balance" for cards). It is read from PDFs and from CSV balance columns, or you can type it. Newer transactions are then added on top.
+- If no balance is known, it is estimated from transactions and labelled as an estimate.
+
+**Dashboard:** shows Bank Balance (liquid cash), Credit Card Owed, and Combined Net Balance (bank minus cards). It also has a **Spending by account** card with All / Bank Accounts / Credit Cards tabs.
+
+**Activity:** the transaction list has the same three tabs.
