@@ -1,5 +1,5 @@
-/* Centric Wealth service worker — offline-first caching. Bump VERSION on every deploy. */
-const VERSION = 'v1.13.0';
+/* Centric Wealth service worker - offline-first caching. Bump VERSION on every deploy. */
+const VERSION = 'v1.16.0';
 const CACHE = `centric-wealth-${VERSION}`;
 
 const LOCAL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './statement-parser.js', './recurring-scanner.js', './advisor-engine.js', './monthly-report.js', './analytics-engine.js', './fonts/manrope-latin-var.woff2'];
@@ -59,7 +59,7 @@ self.addEventListener('fetch', (event) => {
   if (req.mode === 'navigate') {
     event.respondWith((async () => {
       try {
-        const res = await fetch(req);
+        const res = await fetch(req, { cache: 'no-cache' });
         (await caches.open(CACHE)).put('./index.html', res.clone());
         return res;
       } catch {
@@ -69,7 +69,22 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Everything else (pinned CDN libs, icons): cache-first.
+  // The app's own files (scripts, icons, font): network-first, so a new deploy is picked up straight away;
+  // the saved copy is used when offline. ("no-cache" makes the browser check with the server, not its HTTP cache.)
+  if (url.origin === self.location.origin) {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req, { cache: 'no-cache' });
+        if (res.ok) (await caches.open(CACHE)).put(req, res.clone());
+        return res;
+      } catch {
+        return (await caches.match(req, { ignoreSearch: true })) || new Response('', { status: 504, statusText: 'Offline' });
+      }
+    })());
+    return;
+  }
+
+  // Pinned CDN libraries (versioned URLs never change): cache-first.
   event.respondWith((async () => {
     const hit = await caches.match(req, { ignoreVary: true });
     if (hit) return hit;

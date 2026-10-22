@@ -231,17 +231,17 @@
   /** Glass-style tooltip shared by every chart. */
   function tooltip(t, label) {
     return {
-      backgroundColor: t.mode === 'dark' ? 'rgba(30, 41, 59, .92)' : 'rgba(15, 23, 42, .88)', borderColor: 'rgba(255, 255, 255, .10)', borderWidth: 1,
-      titleColor: '#fff', bodyColor: '#e2e8f0', titleFont: { weight: '700', size: 12 }, bodyFont: { size: 12 },
-      padding: 12, cornerRadius: 12, caretSize: 6, boxPadding: 6, usePointStyle: true, displayColors: true,
-      animation: { duration: 180, easing: 'easeOutQuad' }, callbacks: { label },
+      backgroundColor: t.mode === 'dark' ? 'rgba(15, 21, 38, .94)' : 'rgba(12, 18, 34, .90)', borderColor: t.mode === 'dark' ? 'rgba(255, 255, 255, .12)' : 'rgba(255, 255, 255, .18)', borderWidth: 1,
+      titleColor: '#fff', bodyColor: '#cbd5e1', titleFont: { weight: '800', size: 12 }, bodyFont: { size: 12, weight: '600' },
+      padding: { x: 14, y: 12 }, cornerRadius: 14, caretSize: 7, caretPadding: 8, boxPadding: 6, usePointStyle: true, displayColors: true,
+      animation: { duration: 220, easing: 'easeOutCubic' }, callbacks: { label },
     };
   }
   // Entry animation: bars grow up one after another; reduced-motion users get none.
   function entryAnimation(kind) {
     if (reducedMotion()) return false;
-    if (kind === 'bar') return { duration: 900, easing: 'easeOutQuart', delay: (c) => (c.type === 'data' && c.mode === 'default' ? c.dataIndex * 60 + c.datasetIndex * 90 : 0) };
-    return { duration: 900, easing: 'easeOutCubic' };
+    if (kind === 'bar') return { duration: 1000, easing: 'easeOutQuint', delay: (c) => (c.type === 'data' && c.mode === 'default' ? c.dataIndex * 60 + c.datasetIndex * 90 : 0) };
+    return { duration: 1100, easing: 'easeOutQuint' };
   }
 
   /** Validated palette (dataviz reference instance): fixed categorical order, separate status colors. */
@@ -273,12 +273,19 @@
       ...extra,
     };
   }
-  const bar = (label, data, color, stack, extra = {}) => ({ label, data, backgroundColor: color, hoverBackgroundColor: typeof color === 'string' ? color + 'd9' : color, borderRadius: { topLeft: 6, topRight: 6 }, borderSkipped: 'bottom', borderWidth: 0, stack, maxBarThickness: 26, categoryPercentage: 0.7, barPercentage: 0.9, ...extra });
-  const line = (label, data, color, extra = {}) => ({ label, data, borderColor: color, backgroundColor: color, borderWidth: 2.25, pointRadius: 0, pointHoverRadius: 6, pointHoverBorderWidth: 3, pointHoverBorderColor: '#ffffff', pointHoverBackgroundColor: color, pointHitRadius: 14, tension: 0.35, spanGaps: true, borderCapStyle: 'round', ...extra });
-  // Vertical gradient under an area line (fades to transparent at the bottom).
-  const areaFill = (color) => (c) => {
-    const a = c.chart.chartArea; if (!a) return color + '22';
-    const g = c.chart.ctx.createLinearGradient(0, a.top, 0, a.bottom); g.addColorStop(0, color + '55'); g.addColorStop(1, color + '00'); return g;
+  // Bars are filled with a vertical gradient: full colour at the top, softer toward the axis.
+  // `color` may be one colour or an array (one per bar). Legends and the PDF get the solid colour.
+  const barFill = (color, soft = '8c') => (c) => {
+    const col = Array.isArray(color) ? color[c.dataIndex] || color[0] : color;
+    const a = c.chart.chartArea; if (!a || c.type !== 'data') return col;
+    const g = c.chart.ctx.createLinearGradient(0, a.top, 0, a.bottom); g.addColorStop(0, col); g.addColorStop(1, col + soft); return g;
+  };
+  const bar = (label, data, color, stack, extra = {}) => ({ label, data, backgroundColor: barFill(color), hoverBackgroundColor: Array.isArray(color) ? color : color, borderRadius: { topLeft: 7, topRight: 7 }, borderSkipped: 'bottom', borderWidth: 0, stack, maxBarThickness: 26, categoryPercentage: 0.7, barPercentage: 0.9, ...extra });
+  const line = (label, data, color, extra = {}) => ({ label, data, borderColor: color, backgroundColor: color, borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 6, pointHoverBorderWidth: 3, pointHoverBorderColor: '#ffffff', pointHoverBackgroundColor: color, pointHitRadius: 14, tension: 0.38, spanGaps: true, borderCapStyle: 'round', ...extra });
+  // Vertical gradient under an area line (fades to transparent at the bottom); legends get the solid colour.
+  const areaFill = (color, top = '59') => (c) => {
+    const a = c.chart.chartArea; if (!a || c.type !== 'data') return color;
+    const g = c.chart.ctx.createLinearGradient(0, a.top, 0, a.bottom); g.addColorStop(0, color + top); g.addColorStop(0.6, color + '14'); g.addColorStop(1, color + '00'); return g;
   };
   // 2px surface gap between stacked segments (no outlines).
   const gapStack = (t) => ({ borderColor: t.surface, borderWidth: { top: 2 } });
@@ -300,7 +307,7 @@
     },
     /** End-of-month amount owed: one line per card plus the total. */
     debtTrajectory(cc, labels, t, fmt) {
-      const ds = cc.cards.slice(0, 5).map((c, i) => line(c.name, c.owed, t.series[i]));
+      const ds = cc.cards.slice(0, 5).map((c, i) => line(c.name, c.owed, t.series[i], { fill: 'origin', backgroundColor: areaFill(t.series[i], cc.cards.length > 1 ? '26' : '59') }));
       if (cc.cards.length > 1) ds.push(line('Total owed', cc.totalOwed, t.ink2, { borderDash: [], borderWidth: 2.5 }));
       return { type: 'line', data: { labels, datasets: ds }, options: baseOptions(t, fmt) };
     },

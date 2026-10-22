@@ -3,6 +3,9 @@
 Everything runs in the browser. Data lives in IndexedDB on the device; there are no servers, accounts, analytics or API keys.
 
 ## Files
+
+Developing with Claude Code? Start with **CLAUDE.md** (architecture, rules, release checklist) and run `npm install && npx playwright install chromium && npm test`.
+
 | File | Purpose |
 |---|---|
 | `index.html` | The whole app: FinanceDB (IndexedDB wrapper) + React UI |
@@ -26,6 +29,8 @@ All paths are relative, so it works from a repo sub-path.
 ## Updating
 Bump `VERSION` in `sw.js` on every deploy so returning visitors get the new files.
 
+
+**After every deploy**, bump three things together: `VERSION` in `sw.js`, `APP_VERSION` in `index.html`, and the `?v=` on the `<script>` tags. Open copies then pick up the new files automatically: the service worker fetches the app's own files from the network first and reloads the page once when the new version takes over. Settings shows the running version at the bottom ("Centric Wealth v1.16.0 · statement reader v1.4.0"). Offline, the saved copies are used.
 ## Using FinanceDB elsewhere
 ```js
 await FinanceDB.put('transactions', { type: 'expense', amount: 12.5, category: 'Dining', date: '2026-10-21', description: 'Lunch' });
@@ -175,11 +180,21 @@ Credit limits come from card statements ("Credit Limit"), or you can enter them 
 - **Emergency fund target:** a number of months of essential spending (default 3; the Advisor works out the monthly figure) or a fixed amount.
 - **Goals:** any number of goals (e.g. Vacation Fund) with an amount, an optional date ("save $X/month to reach it on time"), and a color and icon.
 - **Add Funds / Withdraw Funds:** can move money from or to a bank account or the cash wallet. That's recorded as a transfer on both sides, so net worth doesn't change. "Not tracked here" is for a fund kept in a separate savings account.
-- **Animations:** a liquid-fill gauge, count-up numbers, bars that fill, and a floating "+$X" with a glow on deposits. All animation is turned off when the phone's Reduce Motion setting is on.
+- **Animations:** savings are drawn in neon blue. The emergency fund has a liquid-fill gauge with waves and rising bubbles; goal bars are liquid fills with drifting ripples, a light sweep and a glowing leading edge, and they surge brighter when you add funds. Numbers count up, and a floating "+$X" with a glow appears on deposits. All animation is turned off when the phone's Reduce Motion setting is on.
 - **Storage:** funds are accounts with `kind: 'fund'`, and deposits and withdrawals are `transfer` transactions with `accountType: 'fund'`. They count in net worth and in the Advisor's emergency-fund score.
 - **Reports:** funds appear in the balances, a Savings & Emergency Fund section, and the Markdown and text reports.
 - **PDF chart summary:** the PDF also gets a **Chart Summary** page, with the charts drawn on the device as images.
 
+
+## Bank statements with "Date | Amount | Description" (PNC and similar)
+
+Some banks print the amount *before* the description and group rows under headings instead of signing them. Examples are PNC Virtual Wallet and many credit unions. The parser handles them as follows:
+- **Signs:** "Deposits and Other Additions" rows count as money in. "…Withdrawals and Purchases" and "…Deductions" rows count as money out.
+- **Wrapped lines:** descriptions that wrap onto the next line ("Delray Beach" / "Fl") are joined. Text from the side column ("There were 7 Deposits… totaling $…") is dropped.
+- **Daily balance table:** the "Daily Balance Detail" table is ignored, not read as transactions.
+- **Short amounts and missing years:** amounts like `.59` read as $0.59, and dates without a year take it from the statement period.
+- **Balance check:** the summary table (Beginning | Deposits | Deductions | Ending) is read. The preview checks beginning + deposits − withdrawals = ending.
+- **Transfers:** Zelle (including PNC's "Zel To/From"), wires and transfers between your own accounts are transfers. Payments to a credit card are **Card Payments**: the parser recognises common issuers (Zolve, Amex, Discover, Capital One…) and the names of cards you've already added.
 
 ## Card statements that print every amount without a sign
 
@@ -227,13 +242,15 @@ Some issuers (for example Zolve) print every amount as a positive number. They p
 
 ## Look & feel
 
-- **Theme:** cool mist light mode and deep navy dark mode, built from CSS variables (`--canvas`, `--card`, `--glass`…) at the top of `index.html`. Cards are soft translucent panels with navy-tinted shadows; real frosted glass (backdrop blur) is used only where content scrolls underneath (the floating nav dock, bottom sheets and toasts), which keeps scrolling smooth on phones.
-- **Hero:** the combined net balance sits on a deep navy card with faint concentric rings and counts up when it changes.
-- **Type:** Manrope, self-hosted in `fonts/` and precached by the service worker, so it works offline and no font request leaves the device.
+- **Theme (v1.16.0 redesign):** a dark-first fintech look (midnight canvas) and a clean "neo-light" mode, built from CSS variables (`--canvas`, `--card-bg`, `--card-sheen`, `--glass`, `--sheet`, `--income`/`--expense`/`--savings`…) at the top of `index.html`. A fixed colour mesh (emerald, neon blue, violet) with faint film grain sits behind everything.
+- **Glass cards:** every card is frosted glass (translucent tint, top sheen, hairline highlight, 14px backdrop blur over the mesh) with 24px corners and soft layered shadows. Older browsers without backdrop blur get solid cards.
+- **Colour meaning:** emerald for income and assets, rose for expenses and debt, neon blue for savings, violet for subscriptions. Summary cards carry their colour as a gradient icon chip, a glowing gradient border and a soft corner bloom (`.glow-edge` with `--accent`).
+- **Hero and net worth:** the combined net balance sits on a midnight card with an emerald/neon-blue aurora, faint rings and a slowly orbiting glow border, with the cents set smaller. A full-width Net Worth card follows, with an assets-vs-debt bar.
+- **Type:** Manrope, self-hosted in `fonts/` and precached by the service worker, so it works offline and no font request leaves the device. Big numbers use tight tracking and tabular figures.
 - **Motion:**
-  - Each tab's sections rise in one after another; statement rows fade up as they load from IndexedDB; a shimmer skeleton shows while the database opens.
-  - Buttons, tabs and chips scale down slightly when pressed; segmented controls and the nav dock have a sliding highlight.
-  - Bottom sheets spring up, slide back down when closed, and can be dragged down by their handle to dismiss. "Show numbers" and "Skipped rows" expand smoothly.
-  - Balances, income, expenses and savings count up to new values; savings bars fill with a moving sheen and the emergency fund keeps its liquid gauge.
-  - Charts: bars grow one after another, lines draw in from left to right with a soft glow, the doughnut rotates into place, and tooltips are dark glass with highlighted points.
-- **Reduce Motion:** if the phone's Reduce Motion setting is on, all of the above is switched off (numbers and charts appear instantly). PDF chart images are always rendered without animation.
+  - Each tab's sections fade and slide up one after another; transaction rows (from IndexedDB or a statement preview) fade up one by one; a shimmer skeleton shows while the database opens.
+  - Every button, tab and tappable card scales down when pressed (to 95%; full-width rows and large cards to 97–98% so they don't jump). Segmented controls and the nav dock have a springy sliding highlight with a glowing indicator.
+  - Bottom sheets spring up over a blurred, dimmed backdrop, slide back down when closed, and can be dragged down by their handle to dismiss. Sheets render into `<body>` so a glass card can never trap them. Statement previews, batch lists, results and errors on Upload slide up into place.
+  - Balances, income, expenses and savings count up to new values.
+  - Charts: bars and line areas use vertical gradients (full colour fading toward the axis), bars grow one after another, lines draw in from left to right with a soft glow and smooth easing, the doughnut rotates into place, and tooltips are rounded dark glass. Legends and PDF images keep solid colours.
+- **Reduce Motion:** if the phone's Reduce Motion setting is on, all of the above is switched off, including the hero's orbiting border, liquid ripples and bubbles (numbers and charts appear instantly). PDF chart images are always rendered without animation.

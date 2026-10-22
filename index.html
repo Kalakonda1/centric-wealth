@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Centric Wealth — Private Finance</title>
   <meta name="description" content="Offline-first personal finance tracker. All data stays on this device." />
-  <meta name="theme-color" content="#070d18" media="(prefers-color-scheme: dark)" />
-  <meta name="theme-color" content="#eef2f6" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#05070e" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#eef2f8" media="(prefers-color-scheme: light)" />
   <link rel="preload" href="./fonts/manrope-latin-var.woff2" as="font" type="font/woff2" crossorigin />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
@@ -46,92 +46,134 @@
     /* Manrope (SIL Open Font License, fonts/OFL-Manrope.txt) - served from this site, no font CDN. */
     @font-face { font-family: 'Manrope'; src: url('./fonts/manrope-latin-var.woff2') format('woff2'); font-weight: 200 800; font-style: normal; font-display: swap; }
 
-    /* ---------- design tokens ---------- */
+    /* ---------- design tokens ----------
+       Accents carry meaning everywhere: emerald = income / assets, rose = expenses / debt, neon blue = savings. */
     :root {
       color-scheme: light;
-      --canvas: #eef2f6;
-      --glow-a: rgba(16, 185, 129, .13);    /* emerald haze */
-      --glow-b: rgba(42, 120, 214, .11);    /* blue haze */
-      --card: rgba(255, 255, 255, .84);
+      --canvas: #eef2f8;
+      --mesh-1: rgba(16, 185, 129, .17);    /* emerald */
+      --mesh-2: rgba(56, 189, 248, .20);    /* neon blue */
+      --mesh-3: rgba(139, 92, 246, .11);    /* violet */
+      --card-bg: rgba(255, 255, 255, .66);
+      --card-sheen: linear-gradient(165deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .50) 70%);
       --card-solid: #ffffff;
-      --card-border: rgba(255, 255, 255, .95);
-      --card-shadow: 0 1px 2px rgba(14, 27, 44, .05), 0 14px 30px -18px rgba(14, 27, 44, .30);
-      --glass: rgba(255, 255, 255, .70);
-      --glass-border: rgba(255, 255, 255, .75);
-      --glass-shadow: 0 20px 44px -20px rgba(14, 27, 44, .45);
-      --sheet: rgba(250, 252, 254, .94);
+      --card-border: rgba(255, 255, 255, .9);
+      --card-highlight: inset 0 1px 0 rgba(255, 255, 255, .95);
+      --card-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 12px 32px -16px rgba(30, 41, 82, .26);
+      --card-shadow-hover: 0 1px 2px rgba(15, 23, 42, .05), 0 24px 44px -20px rgba(30, 41, 82, .38);
+      --glass: rgba(255, 255, 255, .68);
+      --glass-border: rgba(255, 255, 255, .8);
+      --glass-shadow: 0 24px 48px -22px rgba(30, 41, 82, .45), 0 2px 6px rgba(15, 23, 42, .05);
+      --sheet: rgba(248, 250, 253, .92);
+      --divider: rgba(15, 23, 42, .07);
+      --income: #059669; --expense: #e11d48; --savings: #0284c7;
+      --income-glow: #10b981; --expense-glow: #f43f5e; --savings-glow: #38bdf8;
       --ease-out: cubic-bezier(.22, 1, .36, 1);
       --ease-spring: cubic-bezier(.22, 1.18, .36, 1);
     }
     :root.dark {
       color-scheme: dark;
-      --canvas: #070d18;
-      --glow-a: rgba(16, 185, 129, .13);
-      --glow-b: rgba(57, 135, 229, .16);
-      --card: rgba(18, 28, 46, .80);
-      --card-solid: #111b2c;
-      --card-border: rgba(148, 163, 184, .10);
-      --card-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 18px 36px -20px rgba(0, 0, 0, .75);
-      --glass: rgba(14, 23, 38, .72);
-      --glass-border: rgba(148, 163, 184, .16);
-      --glass-shadow: 0 22px 48px -22px rgba(0, 0, 0, .9);
-      --sheet: rgba(13, 21, 35, .94);
+      --canvas: #05070e;
+      --mesh-1: rgba(16, 185, 129, .20);
+      --mesh-2: rgba(56, 189, 248, .17);
+      --mesh-3: rgba(124, 58, 237, .20);
+      --card-bg: rgba(19, 26, 44, .58);
+      --card-sheen: linear-gradient(165deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .012) 65%);
+      --card-solid: #111827;
+      --card-border: rgba(255, 255, 255, .075);
+      --card-highlight: inset 0 1px 0 rgba(255, 255, 255, .07);
+      --card-shadow: 0 2px 8px -2px rgba(0, 0, 0, .45), 0 22px 44px -26px rgba(0, 0, 0, .95);
+      --card-shadow-hover: 0 2px 8px -2px rgba(0, 0, 0, .5), 0 28px 50px -24px rgba(0, 0, 0, 1);
+      --glass: rgba(13, 18, 32, .66);
+      --glass-border: rgba(255, 255, 255, .09);
+      --glass-shadow: 0 26px 52px -22px rgba(0, 0, 0, .95), inset 0 1px 0 rgba(255, 255, 255, .06);
+      --sheet: rgba(11, 16, 29, .90);
+      --divider: rgba(255, 255, 255, .065);
+      --income: #34d399; --expense: #fb7185; --savings: #38bdf8;
     }
     html, body { min-height: 100%; overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
     body { background: var(--canvas); font-feature-settings: "tnum" 1, "cv11" 1; text-rendering: optimizeLegibility; }
-    /* Soft color haze behind everything (fixed, so cards scroll over it) */
-    body::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-      background: radial-gradient(42rem 30rem at 105% -8%, var(--glow-b), transparent 62%), radial-gradient(36rem 28rem at -15% 28%, var(--glow-a), transparent 60%); }
-    .num { font-variant-numeric: tabular-nums; }
+    /* Colour mesh + a whisper of film grain behind everything (fixed, so the glass cards scroll over it). */
+    body::before { content: ''; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+      background: radial-gradient(40rem 28rem at 112% -6%, var(--mesh-2), transparent 60%), radial-gradient(34rem 26rem at -22% 24%, var(--mesh-1), transparent 62%),
+        radial-gradient(36rem 30rem at 118% 78%, var(--mesh-3), transparent 60%), radial-gradient(28rem 22rem at -10% 105%, var(--mesh-2), transparent 60%); }
+    body::after { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .05; mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+    .num { font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
     .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
     .pt-safe { padding-top: env(safe-area-inset-top); }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { scrollbar-width: none; }
     input, select, textarea { font-size: 16px; } /* stops iOS zoom-on-focus */
     ::selection { background: rgba(16, 185, 129, .25); }
+    .t-income { color: var(--income); } .t-expense { color: var(--expense); } .t-savings { color: var(--savings); }
+    .divide-soft > * + * { border-top: 1px solid var(--divider); }
 
     /* ---------- surfaces ---------- */
-    .card { background: var(--card); border: 1px solid var(--card-border); box-shadow: var(--card-shadow); border-radius: 22px; }
-    /* Real frosted glass only where something scrolls underneath: nav dock, sheets, toasts. */
-    .glass { background: var(--glass); border: 1px solid var(--glass-border); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: blur(22px) saturate(170%); backdrop-filter: blur(22px) saturate(170%); }
-    .glass-sheet { background: var(--sheet); -webkit-backdrop-filter: blur(26px) saturate(160%); backdrop-filter: blur(26px) saturate(160%); box-shadow: 0 -18px 50px -20px rgba(14, 27, 44, .35); }
-    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .glass, .glass-sheet { background: var(--card-solid); } }
-    /* The hero: deep navy glass with concentric rings - the one bold element. */
-    .hero { position: relative; overflow: hidden; border-radius: 28px; color: #f1f5f9;
-      background: radial-gradient(120% 90% at 100% 0%, rgba(52, 211, 160, .28), transparent 55%), linear-gradient(155deg, #13243b 0%, #0b1626 70%);
-      box-shadow: 0 24px 50px -24px rgba(7, 13, 24, .85), inset 0 1px 0 rgba(255, 255, 255, .08); }
+    /* Frosted glass card: translucent tint + top sheen + hairline highlight, blurred over the colour mesh. */
+    .card { background-color: var(--card-bg); background-image: var(--card-sheen); border: 1px solid var(--card-border); box-shadow: var(--card-highlight), var(--card-shadow); border-radius: 24px;
+      -webkit-backdrop-filter: blur(14px) saturate(160%); backdrop-filter: blur(14px) saturate(160%); }
+    .glass { background: var(--glass); border: 1px solid var(--glass-border); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); }
+    .glass-sheet { background: var(--sheet); -webkit-backdrop-filter: blur(28px) saturate(170%); backdrop-filter: blur(28px) saturate(170%); box-shadow: 0 -24px 60px -24px rgba(2, 6, 23, .55), inset 0 1px 0 rgba(255, 255, 255, .08); }
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .card, .glass, .glass-sheet { background: var(--card-solid); } }
+    /* Accent glow: a gradient hairline border plus a soft corner bloom in the card's accent colour (set --accent). */
+    .glow-edge { position: relative; isolation: isolate; overflow: hidden; --accent: #94a3b8; }
+    .glow-edge::before { content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+      background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 75%, transparent), transparent 38%, transparent 72%, color-mix(in srgb, var(--accent) 30%, transparent));
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+    .glow-edge::after { content: ''; position: absolute; z-index: -1; width: 180px; height: 180px; top: -90px; right: -70px; pointer-events: none;
+      background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 34%, transparent), transparent); }
+    .accent-dot { box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent), 0 0 12px currentColor; }
+    /* The hero: deep midnight glass with an emerald / neon-blue aurora and a slowly orbiting glow border. */
+    @property --spin { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+    .hero { position: relative; isolation: isolate; overflow: hidden; border-radius: 30px; color: #f1f5f9;
+      background: radial-gradient(85% 70% at 105% -5%, rgba(56, 189, 248, .38), transparent 60%), radial-gradient(80% 75% at -10% 110%, rgba(16, 185, 129, .40), transparent 62%),
+        radial-gradient(60% 50% at 50% 50%, rgba(99, 102, 241, .14), transparent 70%), linear-gradient(155deg, #111a35 0%, #0a1024 55%, #060a17 100%);
+      box-shadow: 0 34px 64px -32px rgba(16, 185, 129, .55), 0 22px 44px -26px rgba(2, 6, 23, .95), inset 0 1px 0 rgba(255, 255, 255, .12); }
+    .hero::before { content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1.25px; pointer-events: none; z-index: 1;
+      background: conic-gradient(from var(--spin), rgba(255, 255, 255, .10) 0deg, rgba(255, 255, 255, .10) 200deg, rgba(52, 211, 153, .95) 250deg, rgba(56, 189, 248, .95) 290deg, rgba(255, 255, 255, .10) 330deg);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: spin 9s linear infinite; }
+    .hero::after { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: .5; background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, .06) 45%, transparent 60%); }
+    @keyframes spin { to { --spin: 360deg; } }
+    .icon-chip { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 8px 18px -10px currentColor; }
 
     /* ---------- interaction ---------- */
-    .press { transition: transform .18s var(--ease-out), background-color .25s, color .25s, box-shadow .25s, opacity .25s; }
-    .press:active:not(:disabled) { transform: scale(.965); }
-    .lift { transition: transform .22s var(--ease-out), box-shadow .3s var(--ease-out); }
-    .lift:active { transform: scale(.985); }
-    @media (hover: hover) { .lift:hover { transform: translateY(-2px); box-shadow: 0 1px 2px rgba(14,27,44,.05), 0 22px 40px -20px rgba(14,27,44,.40); } }
+    /* Every button, tab and tappable card squeezes slightly when pressed (rows and big cards a little less). */
+    button, [role=button], .press, .lift { -webkit-user-select: none; user-select: none; }
+    :where(button, [role=button], a, .press) { transition: transform .15s var(--ease-out), background-color .25s, color .25s, box-shadow .25s, opacity .25s, border-color .25s; }
+    :where(button, [role=button], .press):active:not(:disabled) { transform: scale(.95); }
+    :where(.press-row, .rise-list > button, .rise-list > * > button.w-full, button.w-full.text-left):active:not(:disabled) { transform: scale(.98); }
+    .lift { transition: transform .15s var(--ease-out), box-shadow .3s var(--ease-out); }
+    .lift:active { transform: scale(.97); }
+    @media (hover: hover) { .lift:hover { transform: translateY(-2px); box-shadow: var(--card-highlight), var(--card-shadow-hover); } }
 
     /* ---------- motion ---------- */
-    @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+    @keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.985); } to { opacity: 1; transform: none; } }
+    @keyframes panelUp { from { opacity: 0; transform: translateY(36px); } to { opacity: 1; transform: none; } }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
     @keyframes sheetIn { from { transform: translateY(100%); } to { transform: translateY(0); } }
     @keyframes sheetOut { from { transform: translateY(0); } to { transform: translateY(105%); } }
     @keyframes toastIn { from { opacity: 0; transform: translateY(-16px) scale(.96); } to { opacity: 1; transform: none; } }
     @keyframes shimmer { from { background-position: 150% 0; } to { background-position: -150% 0; } }
-    @keyframes sheen { from { transform: translateX(-120%); } to { transform: translateX(220%); } }
+    @keyframes sheen { from { transform: translateX(-120%); } to { transform: translateX(260%); } }
     @keyframes fabIn { from { opacity: 0; transform: translateY(16px) scale(.9); } to { opacity: 1; transform: none; } }
-    /* Page entry: the page's sections rise in, one after another (plays when a tab opens). */
-    .stagger > div > *:not([role=dialog]) { animation: rise .5s var(--ease-out) both; }
-    .stagger > div > *:nth-child(2) { animation-delay: .04s; } .stagger > div > *:nth-child(3) { animation-delay: .08s; }
-    .stagger > div > *:nth-child(4) { animation-delay: .12s; } .stagger > div > *:nth-child(5) { animation-delay: .16s; }
-    .stagger > div > *:nth-child(6) { animation-delay: .2s; } .stagger > div > *:nth-child(7) { animation-delay: .24s; }
-    .stagger > div > *:nth-child(8) { animation-delay: .28s; } .stagger > div > *:nth-child(n+9) { animation-delay: .32s; }
-    /* Statement rows fade up as they come in from IndexedDB */
-    .rise-list > * { animation: rise .42s var(--ease-out) both; }
-    .rise-list > *:nth-child(2) { animation-delay: .03s; } .rise-list > *:nth-child(3) { animation-delay: .06s; } .rise-list > *:nth-child(4) { animation-delay: .09s; }
-    .rise-list > *:nth-child(5) { animation-delay: .12s; } .rise-list > *:nth-child(6) { animation-delay: .15s; } .rise-list > *:nth-child(n+7) { animation-delay: .18s; }
+    /* Page entry: the page's sections fade and slide up, one after another (plays when a tab opens). */
+    .stagger > div > *:not([role=dialog]) { animation: rise .55s var(--ease-out) both; }
+    .stagger > div > *:nth-child(2) { animation-delay: .05s; } .stagger > div > *:nth-child(3) { animation-delay: .1s; }
+    .stagger > div > *:nth-child(4) { animation-delay: .15s; } .stagger > div > *:nth-child(5) { animation-delay: .2s; }
+    .stagger > div > *:nth-child(6) { animation-delay: .24s; } .stagger > div > *:nth-child(7) { animation-delay: .28s; }
+    .stagger > div > *:nth-child(8) { animation-delay: .32s; } .stagger > div > *:nth-child(n+9) { animation-delay: .36s; }
+    /* Transaction rows fade up one by one as they come in from IndexedDB or a statement */
+    .rise-list > * { animation: rise .45s var(--ease-out) both; }
+    .rise-list > *:nth-child(2) { animation-delay: .035s; } .rise-list > *:nth-child(3) { animation-delay: .07s; } .rise-list > *:nth-child(4) { animation-delay: .105s; }
+    .rise-list > *:nth-child(5) { animation-delay: .14s; } .rise-list > *:nth-child(6) { animation-delay: .175s; } .rise-list > *:nth-child(7) { animation-delay: .21s; }
+    .rise-list > *:nth-child(8) { animation-delay: .245s; } .rise-list > *:nth-child(n+9) { animation-delay: .28s; }
+    .panel-up { animation: panelUp .55s var(--ease-spring) both; }
     .fade-in { animation: fadeIn .3s var(--ease-out) both; }
-    .sheet-in { animation: sheetIn .46s var(--ease-spring) backwards; }
+    .sheet-in { animation: sheetIn .5s var(--ease-spring) backwards; }
     .sheet-out { animation: sheetOut .26s cubic-bezier(.4, 0, 1, 1) forwards; }
-    .backdrop-in { animation: fadeIn .3s ease-out both; }
+    .backdrop-in { animation: fadeIn .32s ease-out both; }
     .backdrop-out { animation: fadeOut .26s ease-in forwards; }
     .toast-in { animation: toastIn .42s var(--ease-spring) both; }
     .fab-in { animation: fabIn .5s .25s var(--ease-spring) both; }
@@ -140,26 +182,38 @@
     .accordion { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .32s var(--ease-out), opacity .32s; opacity: 0; }
     .accordion.open { grid-template-rows: 1fr; opacity: 1; }
     .accordion > div { overflow: hidden; min-height: 0; }
-    /* Progress fills: gradient with a slow light sweep */
-    .grow-bar { position: relative; overflow: hidden; transition: width 1.1s var(--ease-out); }
-    .grow-bar.liquid::after { content: ''; position: absolute; inset: 0; width: 45%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent); animation: sheen 2.8s 1s ease-in-out infinite; }
 
-    /* Savings animations: liquid waves, money pop-ups, glow on deposit */
+    /* Progress fills: gradient that springs to its width, with a soft glow */
+    .grow-bar { position: relative; overflow: hidden; transition: width 1.2s cubic-bezier(.22, 1.08, .36, 1), filter .6s; }
+    /* Liquid fill (savings): drifting ripples, a light sweep and a bright leading edge; surges when money is added. */
+    @keyframes ripple { from { background-position: 0 0; } to { background-position: 48px 0; } }
+    .grow-bar.liquid { box-shadow: 0 0 14px -2px var(--bar-glow, rgba(56, 189, 248, .55)); }
+    .grow-bar.liquid::before { content: ''; position: absolute; inset: 0; opacity: .22;
+      background: repeating-linear-gradient(115deg, rgba(255,255,255,0) 0 14px, rgba(255,255,255,.6) 14px 17px, rgba(255,255,255,0) 17px 24px); animation: ripple 1.8s linear infinite; }
+    .grow-bar.liquid::after { content: ''; position: absolute; inset: 0; width: 45%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent); animation: sheen 2.6s .8s ease-in-out infinite; }
+    .grow-bar .meniscus { position: absolute; right: 0; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 9999px; background: #fff; opacity: .9; box-shadow: 0 0 10px 3px var(--bar-glow, rgba(56, 189, 248, .8)); }
+    @keyframes surge { 0% { filter: brightness(1); } 30% { filter: brightness(1.45) saturate(1.2); } 100% { filter: brightness(1); } }
+    .grow-bar.surge { animation: surge 1.3s ease-out; }
+
+    /* Savings animations: liquid waves, rising bubbles, money pop-ups, glow on deposit */
     @keyframes waveX { from { transform: translateX(0); } to { transform: translateX(-50%); } }
     .wave-a { animation: waveX 6s linear infinite; transform-box: fill-box; }
     .wave-b { animation: waveX 9s linear infinite reverse; transform-box: fill-box; }
+    @keyframes bubble { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: .9; } 100% { transform: translateY(-70px); opacity: 0; } }
+    .bubble { animation: bubble 3.2s ease-in infinite; transform-box: fill-box; }
     @keyframes popUp { 0% { opacity: 0; transform: translateY(8px) scale(.9); } 15% { opacity: 1; transform: translateY(0) scale(1); } 75% { opacity: 1; transform: translateY(-12px); } 100% { opacity: 0; transform: translateY(-22px); } }
     .pop-up { animation: popUp 1.9s ease-out forwards; }
-    @keyframes glowRing { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,.45); } 100% { box-shadow: 0 0 0 16px rgba(16,185,129,0); } }
+    @keyframes glowRing { 0% { box-shadow: 0 0 0 0 rgba(56,189,248,.5); } 100% { box-shadow: 0 0 0 18px rgba(56,189,248,0); } }
     .glow { animation: glowRing 1.1s ease-out; }
     /* Card due within 3 days or overdue: the badge pulses */
     @keyframes pulseRed { 0% { box-shadow: 0 0 0 0 rgba(225,29,72,.55); } 70% { box-shadow: 0 0 0 9px rgba(225,29,72,0); } 100% { box-shadow: 0 0 0 0 rgba(225,29,72,0); } }
     .pulse-red { animation: pulseRed 1.6s ease-out infinite; }
 
     @media (prefers-reduced-motion: reduce) {
-      .stagger > div > *:not([role=dialog]), .rise-list > *, .fade-in, .sheet-in, .sheet-out, .backdrop-in, .backdrop-out, .toast-in, .fab-in, .skeleton,
-      .wave-a, .wave-b, .pop-up, .glow, .pulse-red, .grow-bar.liquid::after { animation: none !important; }
-      .grow-bar, .press, .lift, .accordion { transition: none !important; }
+      .stagger > div > *:not([role=dialog]), .rise-list > *, .panel-up, .fade-in, .sheet-in, .sheet-out, .backdrop-in, .backdrop-out, .toast-in, .fab-in, .skeleton,
+      .wave-a, .wave-b, .bubble, .pop-up, .glow, .pulse-red, .grow-bar.liquid::before, .grow-bar.liquid::after, .grow-bar.surge, .hero::before { animation: none !important; }
+      .grow-bar, .press, .lift, .accordion, :where(button, [role=button], a) { transition: none !important; }
+      .bubble { display: none; }
     }
     #boot { position: fixed; inset: 0; display: grid; place-items: center; font: 14px system-ui; color: #64748b; }
   </style>
@@ -296,15 +350,15 @@
   </script>
 
   <!-- Monthly report builder + client-side download (see monthly-report.js) -->
-  <script src="./monthly-report.js"></script>
+  <script src="./monthly-report.js?v=1.16.0"></script>
   <!-- Recurring subscriptions/bills detection + local reminders (see recurring-scanner.js) -->
   <!-- PDF/CSV statement parsing for the Upload tab (see statement-parser.js) -->
-  <script src="./statement-parser.js"></script>
-  <script src="./recurring-scanner.js"></script>
+  <script src="./statement-parser.js?v=1.16.0"></script>
+  <script src="./recurring-scanner.js?v=1.16.0"></script>
   <!-- Financial health score, 50/30/20 and debt payoff maths (see advisor-engine.js) -->
-  <script src="./advisor-engine.js"></script>
+  <script src="./advisor-engine.js?v=1.16.0"></script>
   <!-- Analytics calculations + Chart.js configs; savings funds (see analytics-engine.js) -->
-  <script src="./analytics-engine.js"></script>
+  <script src="./analytics-engine.js?v=1.16.0"></script>
 
   <!-- =====================================================================
        React app (JSX compiled in-browser by Babel Standalone)
@@ -471,12 +525,12 @@
   );
   const Button = ({ variant = 'primary', className = '', children, ...p }) => {
     const styles = {
-      primary: 'text-white bg-gradient-to-b from-brand-500 to-brand-600 shadow-[0_8px_18px_-8px_rgba(5,150,105,.7),inset_0_1px_0_rgba(255,255,255,.25)] active:from-brand-600 active:to-brand-700',
-      secondary: 'bg-slate-900/[.05] text-slate-800 dark:bg-white/[.07] dark:text-slate-100 active:bg-slate-900/10 dark:active:bg-white/10',
-      danger: 'text-white bg-gradient-to-b from-rose-500 to-rose-600 shadow-[0_8px_18px_-8px_rgba(225,29,72,.6)]',
+      primary: 'text-white bg-gradient-to-br from-emerald-400 via-brand-500 to-emerald-700 shadow-[0_10px_24px_-10px_rgba(16,185,129,.9),inset_0_1px_0_rgba(255,255,255,.3)] active:brightness-95',
+      secondary: 'bg-slate-900/[.05] text-slate-800 ring-1 ring-inset ring-slate-900/[.04] dark:bg-white/[.07] dark:ring-white/[.06] dark:text-slate-100 active:bg-slate-900/10 dark:active:bg-white/10',
+      danger: 'text-white bg-gradient-to-br from-rose-400 via-rose-500 to-rose-700 shadow-[0_10px_24px_-10px_rgba(244,63,94,.85),inset_0_1px_0_rgba(255,255,255,.25)]',
       ghost: 'text-brand-700 dark:text-brand-400 active:bg-brand-500/10',
     };
-    return <button className={cls('press inline-flex items-center justify-center gap-2 rounded-[14px] px-4 h-11 text-[15px] font-semibold disabled:opacity-50 disabled:shadow-none', styles[variant], className)} {...p}>{children}</button>;
+    return <button className={cls('press inline-flex items-center justify-center gap-2 rounded-2xl px-4 h-11 text-[15px] font-semibold tracking-[-0.01em] disabled:opacity-50 disabled:shadow-none', styles[variant], className)} {...p}>{children}</button>;
   };
   const Field = ({ label, hint, children }) => (
     <label className="block">
@@ -485,7 +539,7 @@
       {hint && <span className="block text-xs text-slate-500 mt-1">{hint}</span>}
     </label>
   );
-  const inputCls = 'w-full h-11 rounded-[14px] border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-white/[.04] px-3 outline-none transition-all duration-300 ease-in-out focus:ring-4 focus:ring-brand-500/15 focus:border-brand-500 focus:bg-white dark:focus:bg-white/[.06]';
+  const inputCls = 'w-full h-11 rounded-2xl border border-slate-200/80 dark:border-white/[.08] bg-white/80 dark:bg-white/[.04] px-3 outline-none transition-all duration-300 ease-in-out focus:ring-4 focus:ring-brand-500/15 focus:border-brand-500 focus:bg-white dark:focus:bg-white/[.06]';
   const Input = (p) => <input className={inputCls} {...p} />;
   const Select = ({ options, ...p }) => (
     <select className={inputCls} {...p}>{options.map((o) => typeof o === 'string' ? <option key={o} value={o}>{o}</option> : <option key={o.value} value={o.value}>{o.label}</option>)}</select>
@@ -494,12 +548,12 @@
   const Segmented = ({ value, onChange, options }) => {
     const i = Math.max(0, options.findIndex((o) => o.value === value)), n = options.length;
     return (
-      <div className="relative grid rounded-[14px] bg-slate-900/[.06] dark:bg-white/[.06] p-1" style={{ gridTemplateColumns: `repeat(${n}, 1fr)` }}>
-        <span aria-hidden="true" className="absolute top-1 bottom-1 left-1 rounded-[10px] bg-white dark:bg-slate-700/80 shadow-[0_2px_8px_-2px_rgba(14,27,44,.25)] transition-transform duration-300 ease-out"
+      <div className="relative grid rounded-2xl bg-slate-900/[.06] dark:bg-white/[.05] ring-1 ring-inset ring-slate-900/[.03] dark:ring-white/[.05] p-1" style={{ gridTemplateColumns: `repeat(${n}, 1fr)` }}>
+        <span aria-hidden="true" className="absolute top-1 bottom-1 left-1 rounded-xl bg-white dark:bg-white/[.08] dark:bg-gradient-to-b dark:from-white/[.14] dark:to-white/[.04] shadow-[0_2px_10px_-2px_rgba(14,27,44,.25)] dark:shadow-[0_4px_14px_-4px_rgba(0,0,0,.8),inset_0_1px_0_rgba(255,255,255,.12)] transition-transform duration-500 ease-spring"
           style={{ width: `calc((100% - .5rem) / ${n})`, transform: `translateX(${i * 100}%)` }} />
         {options.map((o) => (
           <button key={o.value} type="button" onClick={() => onChange(o.value)} aria-pressed={value === o.value}
-            className={cls('press relative z-10 h-9 rounded-[10px] text-sm font-semibold', value === o.value ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400')}>
+            className={cls('press relative z-10 h-9 rounded-xl text-sm font-semibold', value === o.value ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400')}>
             {o.label}
           </button>
         ))}
@@ -561,13 +615,14 @@
       else panel.current.style.transform = '';
     };
     if (!mounted) return null;
-    return (
+    // Portalled to <body> so a glass card (backdrop-filter) or an animating parent can't trap the fixed overlay.
+    return ReactDOM.createPortal(
       <div className="fixed inset-0 z-50 flex items-end justify-center" role="dialog" aria-modal="true" aria-label={title}>
-        <div className={cls('absolute inset-0 bg-slate-950/45 backdrop-blur-[3px]', closing ? 'backdrop-out' : 'backdrop-in')} onClick={onClose} />
-        <div ref={panel} className={cls('glass-sheet relative w-full max-w-lg max-h-[92vh] overflow-y-auto overscroll-contain rounded-t-[30px] border-t border-white/60 dark:border-white/10 pb-safe', closing ? 'sheet-out' : 'sheet-in')}>
-          <div className="sticky top-0 z-10 px-5 pt-2.5 pb-3 bg-[var(--sheet)] border-b border-slate-900/[.05] dark:border-white/[.06]">
+        <div className={cls('absolute inset-0 bg-slate-950/50 backdrop-blur-md', closing ? 'backdrop-out' : 'backdrop-in')} onClick={onClose} />
+        <div ref={panel} className={cls('glass-sheet relative w-full max-w-lg max-h-[92vh] overflow-y-auto overscroll-contain rounded-t-[32px] border-t border-white/70 dark:border-white/[.12] pb-safe', closing ? 'sheet-out' : 'sheet-in')}>
+          <div className="sticky top-0 z-10 px-5 pt-2.5 pb-3 bg-[var(--sheet)] border-b border-[color:var(--divider)]">
             <div className="mx-auto -mt-1 mb-2 h-6 w-24 grid place-items-center cursor-grab touch-none" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} aria-hidden="true">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-slate-600" />
+              <span className="h-1.5 w-11 rounded-full bg-slate-300 dark:bg-white/25" />
             </div>
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold tracking-tight">{title}</h3>
@@ -576,7 +631,8 @@
           </div>
           <div className="px-5 py-4">{open ? children : cached.current}</div>
         </div>
-      </div>
+      </div>,
+      document.body
     );
   }
 
@@ -584,7 +640,7 @@
     if (!toast) return null;
     return (
       <div className="fixed inset-x-0 z-[60] flex justify-center pointer-events-none px-6" style={{ top: 'calc(env(safe-area-inset-top) + .75rem)' }} role="status">
-        <div key={toast.msg + toast.kind} className={cls('toast-in inline-flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold', toast.kind === 'error' ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30' : 'glass text-slate-900 dark:text-white')}>
+        <div key={toast.msg + toast.kind} className={cls('toast-in inline-flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold', toast.kind === 'error' ? 'bg-gradient-to-br from-rose-500 to-rose-700 text-white shadow-[0_14px_30px_-10px_rgba(244,63,94,.8)]' : 'glass text-slate-900 dark:text-white')}>
           <Icon name={toast.kind === 'error' ? 'CircleAlert' : 'CircleCheck'} size={17} className={toast.kind === 'error' ? '' : 'text-emerald-600 dark:text-emerald-400'} />{toast.msg}
         </div>
       </div>
@@ -631,20 +687,56 @@
   }
 
   /* ============================================================ DASHBOARD */
+  // Accent per meaning: green = income/assets, red = expenses/debt, sky = bank cash, blue = savings.
+  const TONES = {
+    slate: { accent: '#94a3b8', chip: 'from-slate-400 to-slate-600' },
+    green: { accent: '#10b981', chip: 'from-emerald-300 to-emerald-600' },
+    red: { accent: '#f43f5e', chip: 'from-rose-300 to-rose-600' },
+    violet: { accent: '#8b5cf6', chip: 'from-violet-300 to-violet-600' },
+    sky: { accent: '#38bdf8', chip: 'from-sky-300 to-sky-600' },
+  };
+  const ToneChip = ({ icon, tone = 'slate', size = 'w-10 h-10' }) => (
+    <div className={cls(size, 'icon-chip rounded-[14px] grid place-items-center shrink-0 text-white bg-gradient-to-br', TONES[tone].chip)} style={{ color: TONES[tone].accent }}>
+      <Icon name={icon} size={18} strokeWidth={2.2} className="text-white" />
+    </div>
+  );
   function SummaryCard({ icon, label, value, amount, sub, tone = 'slate', onClick }) {
-    const tones = {
-      slate: 'from-slate-500/15 to-slate-500/5 text-slate-700 dark:text-slate-200',
-      green: 'from-emerald-500/20 to-emerald-500/5 text-emerald-700 dark:text-emerald-400',
-      red: 'from-rose-500/20 to-rose-500/5 text-rose-700 dark:text-rose-400',
-      violet: 'from-violet-500/20 to-violet-500/5 text-violet-700 dark:text-violet-400',
-      sky: 'from-sky-500/20 to-sky-500/5 text-sky-700 dark:text-sky-400',
-    };
     return (
-      <Card className="lift p-4 text-left cursor-pointer select-none" onClick={onClick} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onClick && onClick()} role="button" tabIndex={0}>
-        <div className={cls('w-9 h-9 rounded-[12px] grid place-items-center mb-3 bg-gradient-to-br', tones[tone])}><Icon name={icon} size={18} /></div>
-        <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{label}</p>
+      <Card className="lift glow-edge p-4 text-left cursor-pointer" style={{ '--accent': TONES[tone].accent }} onClick={onClick} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onClick && onClick()} role="button" tabIndex={0}>
+        <ToneChip icon={icon} tone={tone} />
+        <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-3">{label}</p>
         <p className="num text-[22px] leading-7 font-extrabold tracking-tight mt-0.5 truncate">{amount != null ? <AnimatedMoney value={amount} /> : value}</p>
-        {sub && <p className="text-xs leading-snug text-slate-500 mt-1 whitespace-pre-line">{sub}</p>}
+        {sub && <p className="text-xs leading-snug text-slate-500 dark:text-slate-400 mt-1 whitespace-pre-line">{sub}</p>}
+      </Card>
+    );
+  }
+  // Big balance with the cents set smaller, fintech style ("$12,870" + ".55").
+  function HeroMoney({ value, className }) {
+    const { fmt } = useApp(); const v = useAnimatedNumber(Number(value) || 0);
+    const m = fmt(v).match(/^(.*?)([.,]\d{2})(\D*)$/);
+    return <span className={cls('num', className)}>{m ? <>{m[1]}<span className="text-[0.55em] font-bold opacity-70 tracking-normal">{m[2]}</span>{m[3]}</> : fmt(v)}</span>;
+  }
+  // Full-width net worth: assets vs liabilities on one bar.
+  function NetWorthCard({ s, onClick }) {
+    const tot = Math.max(0, s.assets) + Math.max(0, s.liabilities) || 1;
+    return (
+      <Card className="lift glow-edge mt-3 p-4 cursor-pointer" style={{ '--accent': s.netWorth >= 0 ? '#10b981' : '#f43f5e' }} onClick={onClick} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onClick()} role="button" tabIndex={0} aria-label="Net Worth">
+        <div className="flex items-center gap-3">
+          <ToneChip icon="Scale" tone={s.netWorth >= 0 ? 'green' : 'red'} />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Net Worth</p>
+            <HeroMoney value={s.netWorth} className={cls('block text-[28px] leading-8 font-extrabold tracking-tight', s.netWorth < 0 && 't-expense')} />
+          </div>
+          <Icon name="ChevronRight" size={18} className="text-slate-400 shrink-0" />
+        </div>
+        <div className="mt-3.5 h-2 rounded-full bg-slate-900/[.06] dark:bg-white/[.07] overflow-hidden flex gap-0.5">
+          <GrowBarRaw value={Math.max(0, s.assets) / tot} color="linear-gradient(90deg,#6ee7b7,#10b981)" />
+          <GrowBarRaw value={Math.max(0, s.liabilities) / tot} color="linear-gradient(90deg,#fda4af,#f43f5e)" />
+        </div>
+        <div className="flex justify-between text-xs mt-2">
+          <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400"><i className="accent-dot w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block text-emerald-400" />Assets <AnimatedMoney value={s.assets} short className="font-semibold t-income" /></span>
+          <span className="inline-flex items-center gap-1.5 text-slate-500 dark:text-slate-400"><i className="accent-dot w-1.5 h-1.5 rounded-full bg-rose-400 inline-block text-rose-400" />Debt <AnimatedMoney value={s.liabilities} short className="font-semibold t-expense" /></span>
+        </div>
       </Card>
     );
   }
@@ -670,10 +762,10 @@
       <div>
         <header className="flex items-center justify-between pt-2">
           <div>
-            <p className="text-sm text-slate-500">{monthLabel(s.mk)}</p>
-            <h1 className="text-[28px] leading-9 font-extrabold tracking-tight">{view === 'analytics' ? 'Analytics' : 'Overview'}</h1>
+            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{monthLabel(s.mk)}</p>
+            <h1 className="text-[30px] leading-9 font-extrabold tracking-[-0.03em]">{view === 'analytics' ? 'Analytics' : 'Overview'}</h1>
           </div>
-          <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-emerald-500/10 text-emerald-700 ring-1 ring-inset ring-emerald-500/20 dark:text-emerald-300 dark:bg-emerald-400/10 dark:ring-emerald-400/20 dark:shadow-[0_0_18px_-4px_rgba(16,185,129,.6)]">
             <Icon name="ShieldCheck" size={14} /> On-device
           </span>
         </header>
@@ -691,18 +783,18 @@
           </Card>
         )}
 
-        <section className="hero mt-4 p-5" aria-label="Combined net balance">
+        <section className="hero mt-4 p-5 pb-4" aria-label="Combined net balance">
           <HeroRings />
           <div className="relative">
             <div className="flex items-center justify-between">
-              <p className="text-[13px] font-semibold text-slate-300">Combined net balance</p>
-              <p className="text-[11px] text-slate-400">bank cash − card debt</p>
+              <p className="text-[13px] font-semibold text-slate-300 inline-flex items-center gap-1.5"><i className="accent-dot w-1.5 h-1.5 rounded-full bg-emerald-300 inline-block text-emerald-300" />Combined net balance</p>
+              <p className="text-[11px] text-slate-400 rounded-full bg-white/[.06] ring-1 ring-inset ring-white/10 px-2 py-0.5">bank cash − card debt</p>
             </div>
-            <p className={cls('num text-[40px] leading-[1.1] font-extrabold tracking-tight mt-2', s.netBalance < 0 ? 'text-rose-300' : 'text-white')}><AnimatedMoney value={s.netBalance} /></p>
+            <p className={cls('text-[44px] leading-[1.1] font-extrabold tracking-[-0.035em] mt-2.5 [text-shadow:0_2px_24px_rgba(56,189,248,.25)]', s.netBalance < 0 ? 'text-rose-300' : 'text-white')}><HeroMoney value={s.netBalance} /></p>
             {(s.bankBalance > 0 || s.cardOwed > 0) && (() => {
               const bank = Math.max(0, s.bankBalance), owed = Math.max(0, s.cardOwed), tot = bank + owed || 1;
               return <>
-                <div className="mt-4 h-2 rounded-full bg-white/10 overflow-hidden flex gap-0.5">
+                <div className="mt-4 h-2 rounded-full bg-white/10 overflow-hidden flex gap-0.5 shadow-[0_0_16px_-4px_rgba(56,189,248,.6)]">
                   <GrowBarRaw value={bank / tot} color="linear-gradient(90deg,#38bdf8,#0ea5e9)" />
                   <GrowBarRaw value={owed / tot} color="linear-gradient(90deg,#fb7185,#f43f5e)" />
                 </div>
@@ -712,7 +804,7 @@
                 </div>
               </>;
             })()}
-            {s.savings > 0 && <p className="text-xs text-slate-300 mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/[.07] px-2.5 py-1"><Icon name="PiggyBank" size={13} className="text-emerald-300" />Plus <AnimatedMoney value={s.savings} className="font-semibold text-white" /> set aside in savings funds</p>}
+            {s.savings > 0 && <p className="text-xs text-slate-300 mt-3 inline-flex items-center gap-1.5 rounded-full bg-sky-400/10 ring-1 ring-inset ring-sky-300/20 px-2.5 py-1"><Icon name="PiggyBank" size={13} className="text-sky-300" />Plus <AnimatedMoney value={s.savings} className="font-semibold text-white" /> set aside in savings funds</p>}
           </div>
         </section>
         <div className="grid grid-cols-2 gap-3 mt-3">
@@ -720,29 +812,37 @@
           <SummaryCard icon="CreditCard" tone="red" label="Credit Card Owed" amount={s.cardOwed} sub={`${s.cards.length} card${s.cards.length === 1 ? '' : 's'}${s.cards.some((c) => c.ledger && c.balanceSource === 'estimated') ? '\nincludes estimates' : ''}`} onClick={() => go('budget', 'debt')} />
         </div>
 
+        <NetWorthCard s={s} onClick={() => go('budget', 'assets')} />
+
         <div className="grid grid-cols-2 gap-3 mt-3">
-          <SummaryCard icon="Scale" label="Net Worth" amount={s.netWorth} sub={`${fmt(s.assets, true)} assets\n${fmt(s.liabilities, true)} debt`} onClick={() => go('budget', 'assets')} />
           <SummaryCard icon="TrendingUp" tone="green" label="Monthly Income" amount={s.income} sub={(() => { const n = s.monthTx.filter((t) => t.type === 'income').length; return `${n} deposit${n === 1 ? '' : 's'}`; })()} onClick={() => go('transactions')} />
           <SummaryCard icon="TrendingDown" tone="red" label="Monthly Expense" amount={s.expense} sub={savingsRate == null ? 'No income logged yet' : savingsRate < 0 ? 'More than income this month' : `Saving ${savingsRate}% of income`} onClick={() => go('transactions')} />
-          <SummaryCard icon="Repeat" tone="violet" label="Active Subscriptions" value={String(s.subs.length)} sub={`${fmt(s.subsMonthly)}/mo\n${fmt(s.subsMonthly * 12, true)}/yr`} onClick={() => go('budget', 'bills')} />
         </div>
+        <Card className="lift glow-edge mt-3 p-3.5 flex items-center gap-3 cursor-pointer" style={{ '--accent': TONES.violet.accent }} onClick={() => go('budget', 'bills')} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && go('budget', 'bills')} role="button" tabIndex={0}>
+          <ToneChip icon="Repeat" tone="violet" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Active Subscriptions</p>
+            <p className="font-extrabold tracking-tight"><span className="num text-[20px]">{s.subs.length}</span><span className="text-sm font-semibold text-slate-500 dark:text-slate-400"> · <span className="num">{fmt(s.subsMonthly)}</span>/mo</span></p>
+          </div>
+          <p className="num text-xs text-slate-500 dark:text-slate-400 text-right">{fmt(s.subsMonthly * 12, true)}<br />per year</p>
+        </Card>
 
         <CardDueTracker />
 
         <Card className="mt-3 p-4">
           <div className="flex items-baseline justify-between">
             <p className="text-sm font-medium text-slate-500">Cash flow this month</p>
-            <p className={cls('num font-bold', s.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>{s.net >= 0 ? '+' : ''}<AnimatedMoney value={s.net} /></p>
+            <p className={cls('num font-extrabold', s.net >= 0 ? 't-income' : 't-expense')}>{s.net >= 0 ? '+' : ''}<AnimatedMoney value={s.net} /></p>
           </div>
           <div className="mt-3 h-3 rounded-full bg-slate-900/[.06] dark:bg-white/[.07] overflow-hidden flex gap-0.5">
             {(s.income + s.expense) > 0 && <>
-              <GrowBarRaw value={s.income / (s.income + s.expense)} color="linear-gradient(90deg,#34d399,#10b981)" />
-              <GrowBarRaw value={s.expense / (s.income + s.expense)} color="linear-gradient(90deg,#fda4af,#fb7185)" />
+              <GrowBarRaw value={s.income / (s.income + s.expense)} color="linear-gradient(90deg,#6ee7b7,#10b981)" />
+              <GrowBarRaw value={s.expense / (s.income + s.expense)} color="linear-gradient(90deg,#fda4af,#f43f5e)" />
             </>}
           </div>
           <div className="flex justify-between text-xs text-slate-500 mt-2">
-            <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />In {fmt(s.income, true)}</span>
-            <span className="inline-flex items-center gap-1"><i className="w-2 h-2 rounded-full bg-rose-400 inline-block" />Out {fmt(s.expense, true)}</span>
+            <span className="inline-flex items-center gap-1.5"><i className="accent-dot w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block text-emerald-400" />In <span className="num font-semibold t-income">{fmt(s.income, true)}</span></span>
+            <span className="inline-flex items-center gap-1.5"><i className="accent-dot w-1.5 h-1.5 rounded-full bg-rose-400 inline-block text-rose-400" />Out <span className="num font-semibold t-expense">{fmt(s.expense, true)}</span></span>
           </div>
         </Card>
 
@@ -960,17 +1060,17 @@
     const { fmt } = useApp();
     const moneyIn = isMoneyIn(t), transfer = t.type === 'transfer', income = t.type === 'income', card = acctTypeOf(t) === 'credit', cash = acctTypeOf(t) === 'cash';
     const icon = acctTypeOf(t) === 'fund' ? 'PiggyBank' : transfer ? (t.counterparty ? 'Send' : 'ArrowLeftRight') : income ? 'ArrowDownLeft' : card ? 'CreditCard' : cash ? 'Banknote' : 'ArrowUpRight';
-    const tone = income ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
+    const tone = income ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-1 dark:ring-inset dark:ring-emerald-400/20'
       : transfer ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
       : card ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' : cash ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
     return (
-      <button onClick={onClick} className="press w-full flex items-center gap-3 p-3.5 text-left active:bg-slate-50 dark:active:bg-slate-800/50">
-        <div className={cls('w-10 h-10 rounded-xl grid place-items-center shrink-0', tone)}><Icon name={icon} size={18} /></div>
+      <button onClick={onClick} className="press-row w-full flex items-center gap-3 p-3.5 text-left active:bg-slate-900/[.03] dark:active:bg-white/[.04]">
+        <div className={cls('w-10 h-10 rounded-[14px] grid place-items-center shrink-0', tone)}><Icon name={icon} size={18} /></div>
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{t.description || t.category}</p>
           <p className="text-xs text-slate-500 truncate">{t.category === 'Uncategorized' && <span className="inline-flex items-center gap-0.5 mr-1 px-1.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-300 font-semibold"><Icon name="Tag" size={10} />Needs category</span>}{[t.counterparty, t.category === 'Uncategorized' ? null : t.category, t.accountName, prettyDate(t.date)].filter(Boolean).join(' · ')}</p>
         </div>
-        <p className={cls('num font-semibold', income && 'text-emerald-600 dark:text-emerald-400', transfer && 'text-slate-500 dark:text-slate-400')}>{moneyIn ? '+' : '−'}{fmt(t.amount)}</p>
+        <p className={cls('num font-bold tracking-tight', income && 't-income', transfer && 'text-slate-500 dark:text-slate-400')}>{moneyIn ? '+' : '−'}{fmt(t.amount)}</p>
       </button>
     );
   }
@@ -1168,7 +1268,7 @@
   let batchSeq = 0;
 
   // Card statement: does it add up, and which card details were found (saved to the card on import).
-  function StatementCheck({ meta: m, compact }) {
+  function StatementCheck({ meta: m, kind = 'credit', compact }) {
     const { fmt } = useApp();
     const r = m.reconciliation;
     const found = [m.last4 && `ending ${m.last4}`, m.paymentDueDate && `due ${prettyDate(m.paymentDueDate)}`, m.minimumPayment != null && `minimum ${fmt(m.minimumPayment)}`, m.apr && `APR ${m.apr}%`, m.creditLimit && `limit ${fmt(m.creditLimit, true)}`].filter(Boolean);
@@ -1176,7 +1276,9 @@
     return (
       <div className="mt-3 space-y-1.5 text-xs" data-testid="statement-check">
         {r && (r.ok
-          ? <p className="flex gap-1.5 text-emerald-800 dark:text-emerald-300"><Icon name="CircleCheck" size={14} className="shrink-0 mt-px" /><span className="num">Adds up: previous {fmt(r.previousBalance)} + charges {fmt(r.charges)} − payments & credits {fmt(r.credits)} = new balance {fmt(r.newBalance)}</span></p>
+          ? <p className="flex gap-1.5 text-emerald-800 dark:text-emerald-300"><Icon name="CircleCheck" size={14} className="shrink-0 mt-px" /><span className="num">{kind === 'credit'
+              ? <>Adds up: previous {fmt(r.previousBalance)} + charges {fmt(r.charges)} − payments & credits {fmt(r.credits)} = new balance {fmt(r.newBalance)}</>
+              : <>Adds up: beginning {fmt(r.previousBalance)} + deposits {fmt(r.credits)} − withdrawals {fmt(r.charges)} = ending balance {fmt(r.newBalance)}</>}</span></p>
           : <p className="flex gap-1.5 text-amber-800 dark:text-amber-300"><Icon name="TriangleAlert" size={14} className="shrink-0 mt-px" /><span className="num">Doesn’t add up: transactions give {fmt(r.expected)} but the statement says {fmt(r.newBalance)}. The balance will use the statement’s figure.</span></p>)}
         {m.interestCharged > 0 && <p className="flex gap-1.5 text-slate-600 dark:text-slate-300"><Icon name="Percent" size={14} className="shrink-0 mt-px" />Interest of {fmt(m.interestCharged)} for this period is added as a charge.</p>}
         {found.length > 0 && <p className="flex gap-1.5 text-slate-600 dark:text-slate-300"><Icon name="CreditCard" size={14} className="shrink-0 mt-px" /><span>Card details found: {found.join(' · ')}. Missing details are saved to the card; the due date can be changed any time.</span></p>}
@@ -1221,7 +1323,7 @@
                       : st === 'password' ? 'This PDF is password-protected.'
                       : st === 'error' ? <span className="text-rose-600 dark:text-rose-400">{it.error?.message || 'Couldn’t read this file.'}</span>
                       : st === 'done' ? <span className="text-emerald-700 dark:text-emerald-400">Added {it.result.inserted} to {it.result.accountName}{it.result.skippedDuplicates ? ` · ${it.result.skippedDuplicates} already there` : ''}</span>
-                      : <>{shortRange(it.report)}{inf ? <> · <b className="text-slate-700 dark:text-slate-200">{inf.fresh} new</b>{inf.dup ? ` · ${inf.dup} already imported` : ''}{inf.unc ? ` · ${inf.unc} uncategorized` : ''}</> : ''}{it.report.meta.endingBalance != null ? ` · balance ${fmt(it.report.meta.endingBalance)}` : ''}{it.kind === 'credit' && <StatementCheck meta={it.report.meta} compact />}</>
+                      : <>{shortRange(it.report)}{inf ? <> · <b className="text-slate-700 dark:text-slate-200">{inf.fresh} new</b>{inf.dup ? ` · ${inf.dup} already imported` : ''}{inf.unc ? ` · ${inf.unc} uncategorized` : ''}</> : ''}{it.report.meta.endingBalance != null ? ` · balance ${fmt(it.report.meta.endingBalance)}` : ''}<StatementCheck meta={it.report.meta} kind={it.kind} compact /></>
                     }</p>
                   </div>
                   {!busy && st !== 'done' && <button className="press w-8 h-8 grid place-items-center rounded-full text-slate-400 hover:text-rose-600" aria-label={`Remove ${it.file.name}`} onClick={() => onRemove(it.id)}><Icon name="X" size={16} /></button>}
@@ -1291,7 +1393,7 @@
     const parse = async (file, pw) => {
       setBusy(true); setResult(null);
       try {
-        const report = await StatementParser.parseStatementDetailed(file, { persist: false, accountType: kind, accountName, password: pw || undefined, customRules: data.settings.categoryRules || [] });
+        const report = await StatementParser.parseStatementDetailed(file, { persist: false, accountType: kind, accountName, password: pw || undefined, customRules: data.settings.categoryRules || [], cardNames: data.debts.filter(isCardDebt).map((d) => d.name) });
         setJob({ file, report });
         setBalance(report.meta.endingBalance != null ? String(report.meta.endingBalance) : '');
       } catch (e) { setJob({ file, error: e }); }
@@ -1326,7 +1428,7 @@
       const next = batch.find((it) => it.status === 'queued');
       if (!next) return;
       updateItem(next.id, { status: 'reading', error: null });
-      StatementParser.parseStatementDetailed(next.file, { persist: false, accountType: next.kind, accountName: next.accountName, password: next.password || undefined, customRules })
+      StatementParser.parseStatementDetailed(next.file, { persist: false, accountType: next.kind, accountName: next.accountName, password: next.password || undefined, customRules, cardNames: data.debts.filter(isCardDebt).map((d) => d.name) })
         .then((report) => updateItem(next.id, (it) => (it.kind === next.kind ? { status: 'ready', report } : { status: 'queued' })))
         .catch((e) => updateItem(next.id, { status: e.code === 'PDF_PASSWORD' ? 'password' : 'error', error: e }));
     }, [batch]);
@@ -1445,7 +1547,7 @@
             const sel = kind === k, ki = KIND_INFO[k];
             return (
               <button key={k} role="radio" aria-checked={sel} onClick={() => { setKind(k); setName(''); }}
-                className={cls('press rounded-[20px] border-2 p-3.5 text-left transition-all duration-300 ease-in-out', sel ? (k === 'bank' ? 'border-sky-500 bg-sky-50 dark:bg-sky-500/10' : 'border-violet-500 bg-violet-50 dark:bg-violet-500/10') : 'border-transparent card')}>
+                className={cls('press rounded-[20px] border-2 p-3.5 text-left transition-all duration-300 ease-in-out', sel ? (k === 'bank' ? 'border-sky-500 bg-sky-50 dark:bg-sky-500/10 shadow-[0_0_28px_-10px_rgba(56,189,248,.8)]' : 'border-violet-500 bg-violet-50 dark:bg-violet-500/10 shadow-[0_0_28px_-10px_rgba(139,92,246,.8)]') : 'border-transparent card')}>
                 <div className={cls('w-9 h-9 rounded-xl grid place-items-center mb-2', k === 'bank' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300' : 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300')}><Icon name={ki.icon} size={18} /></div>
                 <p className="font-semibold leading-tight">{ki.title}</p>
                 <p className="text-xs text-slate-500 mt-0.5">{ki.sub}</p>
@@ -1471,16 +1573,17 @@
         <input ref={fileRef} type="file" multiple accept=".pdf,.csv,.tsv,.txt,.json,application/pdf,text/csv,application/json" className="hidden" onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }} />
         <button onClick={() => fileRef.current.click()} disabled={busy}
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}
-          className="press w-full rounded-[24px] border-2 border-dashed border-brand-500/35 bg-white/60 dark:bg-white/[.03] p-7 text-center active:bg-brand-500/5">
-          <div className="mx-auto w-12 h-12 rounded-2xl grid place-items-center bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400"><Icon name={busy ? 'Hourglass' : 'FileSpreadsheet'} size={24} /></div>
+          className="press w-full rounded-3xl border-2 border-dashed border-brand-500/40 bg-white/55 dark:bg-white/[.03] backdrop-blur-md p-7 text-center active:bg-brand-500/5 shadow-[inset_0_0_40px_-18px_rgba(16,185,129,.5)]">
+          <div className={cls('mx-auto w-14 h-14 rounded-2xl grid place-items-center text-white bg-gradient-to-br from-emerald-300 to-emerald-600 shadow-[0_10px_24px_-8px_rgba(16,185,129,.8),inset_0_1px_0_rgba(255,255,255,.35)]', busy && 'animate-pulse')}><Icon name={busy ? 'Hourglass' : 'FileSpreadsheet'} size={24} /></div>
           <p className="font-semibold mt-3">{busy ? 'Reading statement…' : batch ? 'Add more statements' : job ? job.file.name : `Choose ${kind === 'bank' ? 'bank' : 'credit card'} statements`}</p>
           <p className="text-xs text-slate-500 mt-1">One or several PDF / CSV files · or a Centric Wealth backup (.json)</p>
         </button>
 
         {err && (
-          <Card className="mt-3 p-4 border-rose-200 dark:border-rose-500/30">
+          <Card className="panel-up glow-edge mt-3 p-4" style={{ '--accent': '#f43f5e' }}>
             <p className="font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2"><Icon name="TriangleAlert" size={16} />Couldn’t read this file</p>
             <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{err.message}</p>
+            {err.code === 'NO_TRANSACTIONS' && <p className="text-xs text-slate-400 mt-2">Statement reader v{StatementParser.version}. If this is older than 1.4.0, reload the app to get the latest version.</p>}
             {err.code === 'PDF_PASSWORD' && (
               <form className="flex gap-2 mt-3" onSubmit={(e) => { e.preventDefault(); parse(job.file, password); }}>
                 <input className={inputCls} type="password" placeholder="PDF password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
@@ -1491,7 +1594,7 @@
         )}
 
         {preview && (
-          <>
+          <div className="panel-up" key={job.file.name + job.file.size}>
             <SectionTitle>Preview · {accountName}</SectionTitle>
             <Card className="p-4">
               <div className={cls('grid gap-2', preview.c ? 'grid-cols-3' : 'grid-cols-2')}>
@@ -1505,11 +1608,11 @@
                   <Input inputMode="decimal" placeholder="0.00" value={balance} onChange={(e) => setBalance(e.target.value)} />
                 </Field>
               </div>
-              {kind === 'credit' && <StatementCheck meta={job.report.meta} />}
+              <StatementCheck meta={job.report.meta} kind={kind} />
               {(() => { const n = preview.fresh.filter((r) => r.category === 'Uncategorized').length, mine = preview.fresh.filter((r) => r.userCategory).length; return (n > 0 || mine > 0) && <p className="text-xs mt-3 flex gap-1.5 text-slate-600 dark:text-slate-300"><Icon name="Tags" size={14} className="shrink-0 mt-px text-brand-600" /><span>{mine > 0 && `${mine} sorted by your saved category rules. `}{n > 0 && `${n} couldn't be matched and will be Uncategorized. Tap one after importing to pick a category; it's remembered for next time.`}</span></p>; })()}
               <p className="text-xs text-slate-500 mt-3">{preview.fresh.length} new · {preview.rows.length - preview.fresh.length} already imported{job.report.warnings.length ? ` · ${job.report.warnings.length} row${job.report.warnings.length === 1 ? '' : 's'} skipped` : ''} · {parseISO(job.report.meta.dateRange[0]).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – {parseISO(job.report.meta.dateRange[1]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</p>
             </Card>
-            <Card className="mt-3 divide-y divide-slate-900/[.05] dark:divide-white/[.06] overflow-hidden">
+            <Card className="mt-3 divide-y divide-slate-900/[.05] dark:divide-white/[.06] overflow-hidden rise-list">
               {preview.rows.slice(0, 8).map((t, i) => <div key={i} className={cls(t.dup && 'opacity-40')}><TxRow t={t} /></div>)}
               {preview.rows.length > 8 && <p className="p-3 text-xs text-center text-slate-500">+ {preview.rows.length - 8} more</p>}
             </Card>
@@ -1522,15 +1625,15 @@
               <Button variant="secondary" className="flex-1" onClick={() => setJob(null)}>Cancel</Button>
               <Button className="flex-[2]" disabled={busy || !preview.fresh.length} onClick={doImport}>{preview.fresh.length ? `Import ${preview.fresh.length} into ${accountName}` : 'Nothing new to import'}</Button>
             </div>
-          </>
+          </div>
         )}
 
-        {batch && <BatchList batch={batch} view={batchView} done={batchDone} busy={busy} updateItem={updateItem} setItemKind={setItemKind}
+        {batch && <div className="panel-up"><BatchList batch={batch} view={batchView} done={batchDone} busy={busy} updateItem={updateItem} setItemKind={setItemKind}
           onRemove={(id) => setBatch((b) => { const n = b.filter((it) => it.id !== id); return n.length ? n : null; })}
-          onClear={() => { setBatch(null); setBatchDone(null); }} onImport={importAll} />}
+          onClear={() => { setBatch(null); setBatchDone(null); }} onImport={importAll} /></div>}
 
         {result && (
-          <Card className="mt-3 p-4 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20">
+          <Card className="panel-up glow-edge mt-3 p-4" style={{ '--accent': '#10b981' }}>
             <p className="font-semibold flex items-center gap-2"><Icon name="CircleCheck" size={18} className="text-emerald-600" />Imported {result.inserted} into {result.accountName}</p>
             {result.skippedDuplicates > 0 && <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{result.skippedDuplicates} already imported, skipped.</p>}
             {result.needsApr && <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">Add this card’s APR and minimum payment so payoff plans are accurate. <button className="press font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Open Debt</button></p>}
@@ -2046,10 +2149,23 @@
   }
   function AnimatedMoney({ value, className, short }) { const { fmt } = useApp(); const v = useAnimatedNumber(Number(value) || 0); return <span className={cls('num', className)}>{fmt(v, short)}</span>; }
   // Width grows from 0 on first paint, then animates on every change.
-  function GrowBar({ value, color, h = 'h-2.5', track = 'bg-slate-900/[.06] dark:bg-white/[.07]', liquid, children }) {
-    const [w, setW] = useState(0);
-    useEffect(() => { const id = requestAnimationFrame(() => setW(Math.max(0, Math.min(1, value || 0)))); return () => cancelAnimationFrame(id); }, [value]);
-    return <div className={cls('relative rounded-full overflow-hidden', h, track)}><div className={cls('grow-bar h-full rounded-full', liquid && 'liquid')} style={{ width: `${w * 100}%`, background: color }} />{children}</div>;
+  // liquid: rippling fill with a glowing leading edge (glow = its colour) that surges brighter when the value goes up.
+  function GrowBar({ value, color, h = 'h-2.5', track = 'bg-slate-900/[.06] dark:bg-white/[.07]', liquid, glow, children }) {
+    const [w, setW] = useState(0), [surge, setSurge] = useState(0), prev = useRef(null);
+    useEffect(() => {
+      const v = Math.max(0, Math.min(1, value || 0));
+      if (prev.current != null && v > prev.current + 0.0005) setSurge(Date.now());
+      prev.current = v;
+      const id = requestAnimationFrame(() => setW(v)); return () => cancelAnimationFrame(id);
+    }, [value]);
+    return (
+      <div className={cls('relative rounded-full overflow-hidden', h, track)}>
+        <div key={surge} className={cls('grow-bar h-full rounded-full', liquid && 'liquid', surge && 'surge')} style={{ width: `${w * 100}%`, background: color, '--bar-glow': glow }}>
+          {liquid && w > 0.02 && <span className="meniscus" aria-hidden="true" />}
+        </div>
+        {children}
+      </div>
+    );
   }
   // A segment inside a flex track that grows from 0 to its share.
   function GrowBarRaw({ value, color }) {
@@ -2058,7 +2174,7 @@
     return <div className="grow-bar h-full rounded-full shrink-0" style={{ width: `${w * 100}%`, background: color }} />;
   }
   // Circular "liquid fill" gauge: the water level rises to the percentage, with moving waves.
-  function LiquidGauge({ pct, size = 128, color = '#10b981', label = 'funded' }) {
+  function LiquidGauge({ pct, size = 128, color = '#38bdf8', label = 'funded' }) {
     const id = useMemo(() => 'lq' + Math.random().toString(36).slice(2, 8), []);
     const p = Math.max(0, Math.min(1, pct || 0));
     const [level, setLevel] = useState(0);
@@ -2066,15 +2182,21 @@
     const shown = useAnimatedNumber(Math.round((pct || 0) * 100), 1200);
     const wave = 'M0 6 Q15 0 30 6 T60 6 T90 6 T120 6 T150 6 T180 6 T210 6 T240 6 V140 H0 Z';
     return (
-      <svg viewBox="0 0 120 120" width={size} height={size} role="img" aria-label={`${Math.round((pct || 0) * 100)}% ${label}`} className="shrink-0">
-        <defs><clipPath id={id}><circle cx="60" cy="60" r="54" /></clipPath></defs>
-        <circle cx="60" cy="60" r="58" fill="none" stroke={color} strokeOpacity="0.3" strokeWidth="3" />
+      <svg viewBox="0 0 120 120" width={size} height={size} role="img" aria-label={`${Math.round((pct || 0) * 100)}% ${label}`} className="shrink-0 overflow-visible" style={{ filter: `drop-shadow(0 6px 18px ${color}55)` }}>
+        <defs>
+          <clipPath id={id}><circle cx="60" cy="60" r="54" /></clipPath>
+          <linearGradient id={id + 'f'} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={color} stopOpacity=".75" /><stop offset="1" stopColor={color} /></linearGradient>
+          <linearGradient id={id + 'r'} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor={color} /><stop offset="1" stopColor={color} stopOpacity=".25" /></linearGradient>
+        </defs>
+        <circle cx="60" cy="60" r="58" fill="none" stroke={`url(#${id}r)`} strokeWidth="3" />
         <g clipPath={`url(#${id})`}>
-          <rect width="120" height="120" className="fill-slate-100 dark:fill-slate-800" />
-          <g style={{ transform: `translateY(${6 + 108 * (1 - level)}px)`, transition: prefersReducedMotion() ? 'none' : 'transform 1.4s cubic-bezier(.22,1,.36,1)' }}>
+          <rect width="120" height="120" className="fill-slate-100 dark:fill-slate-800/80" />
+          <g style={{ transform: `translateY(${6 + 108 * (1 - level)}px)`, transition: prefersReducedMotion() ? 'none' : 'transform 1.6s cubic-bezier(.22,1.08,.36,1)' }}>
             <path className="wave-b" d={wave} fill={color} opacity="0.35" />
-            <path className="wave-a" d={wave} fill={color} opacity="0.85" transform="translate(0 4)" />
+            <path className="wave-a" d={wave} fill={`url(#${id}f)`} opacity="0.9" transform="translate(0 4)" />
           </g>
+          {level > 0.08 && [[38, 0], [62, 1.1], [80, 2.2], [50, 1.7]].map(([x, d], i) => <circle key={i} className="bubble" cx={x} cy="112" r={i % 2 ? 1.6 : 2.4} fill="#fff" opacity="0" style={{ animationDelay: `${d}s` }} />)}
+          <ellipse cx="42" cy="28" rx="22" ry="9" fill="#fff" opacity=".10" transform="rotate(-25 42 28)" />
         </g>
         <text x="60" y="58" textAnchor="middle" className="fill-slate-900 dark:fill-white stroke-white/70 dark:stroke-slate-900/70" style={{ fontSize: 24, fontWeight: 800, paintOrder: 'stroke', strokeWidth: 3 }}>{Math.round(shown)}%</text>
         <text x="60" y="76" textAnchor="middle" className="fill-slate-600 dark:fill-slate-200" style={{ fontSize: 10, fontWeight: 600 }}>{label}</text>
@@ -2517,7 +2639,7 @@
 
   /* ===================================================== SAVINGS FUNDS */
   const GOAL_ICONS = ['PiggyBank', 'Plane', 'TrendingUp', 'House', 'Car', 'GraduationCap', 'Gift', 'Heart'];
-  const FUND_COLORS = ['#10b981', '#2a78d6', '#eb6834', '#6250d6', '#e87ba4', '#eda100'];
+  const FUND_COLORS = ['#38bdf8', '#10b981', '#eb6834', '#8b5cf6', '#e87ba4', '#eda100'];
 
   function SavingsSection() {
     const { data, fmt } = useApp();
@@ -2528,15 +2650,15 @@
     const goals = funds.filter((f) => f !== ef);
     return (
       <>
-        <SectionTitle action={funds.length > 0 && <span className="num text-xs font-semibold text-slate-500">Total <AnimatedMoney value={total} className="text-slate-800 dark:text-slate-100" /></span>}>Savings & emergency fund</SectionTitle>
+        <SectionTitle action={funds.length > 0 && <span className="num text-xs font-semibold text-slate-500">Total <AnimatedMoney value={total} className="t-savings font-bold" /></span>}>Savings & emergency fund</SectionTitle>
         {ef ? <EmergencyCard fund={ef} onMove={(mode) => setModal({ kind: 'move', fund: ef, mode })} onEdit={() => setModal({ kind: 'setup', fund: ef })} />
-          : <Card className="p-4 flex items-center gap-4">
+          : <Card className="glow-edge p-4 flex items-center gap-4" style={{ '--accent': '#38bdf8' }}>
               <LiquidGauge pct={0} size={84} label="start" />
               <div className="flex-1 min-w-0"><p className="font-semibold">Build your emergency fund</p><p className="text-sm text-slate-500 mt-0.5">A cushion of 3-6 months of essential spending{funds.length || data.transactions.length ? ` (about ${fmt(Analytics.monthlyEssentials(data))}/mo for you)` : ''}.</p>
                 <Button className="mt-3 !h-10" onClick={() => setModal({ kind: 'setup', fundType: 'emergency' })}><Icon name="ShieldCheck" size={16} />Set up</Button></div>
             </Card>}
         {goals.length > 0 && <div className="mt-3 space-y-3">{goals.map((g) => <GoalCard key={g.id} fund={g} onMove={(mode) => setModal({ kind: 'move', fund: g, mode })} onEdit={() => setModal({ kind: 'setup', fund: g })} />)}</div>}
-        <button onClick={() => setModal({ kind: 'setup', fundType: 'goal' })} className="press mt-3 w-full rounded-[20px] border-2 border-dashed border-slate-300 dark:border-slate-700 p-3 text-sm font-semibold text-slate-600 dark:text-slate-300 inline-flex items-center justify-center gap-2 active:bg-brand-500/5"><Icon name="Plus" size={16} />New savings goal</button>
+        <button onClick={() => setModal({ kind: 'setup', fundType: 'goal' })} className="press mt-3 w-full rounded-3xl border-2 border-dashed border-sky-400/40 dark:border-sky-400/25 p-3 text-sm font-semibold t-savings inline-flex items-center justify-center gap-2 active:bg-sky-500/5"><Icon name="Plus" size={16} />New savings goal</button>
         <Sheet open={!!modal} title={modal?.kind === 'move' ? (modal.mode === 'add' ? `Add funds · ${modal.fund.name}` : `Withdraw funds · ${modal.fund.name}`) : modal?.fund ? `Edit ${modal.fund.name}` : modal?.fundType === 'emergency' ? 'Emergency fund' : 'New savings goal'} onClose={() => setModal(null)}>
           {modal?.kind === 'move' && <FundMoveForm fund={modal.fund} initialMode={modal.mode} onDone={() => setModal(null)} />}
           {modal?.kind === 'setup' && <FundSetupForm fund={modal.fund} fundType={modal.fund ? modal.fund.fundType : modal.fundType} onDone={() => setModal(null)} />}
@@ -2563,19 +2685,19 @@
     const milestones = [1, 3, 6].filter((m) => m <= Math.max(6, f.targetMonths));
     const maxMonths = Math.max(6, f.targetMonths);
     return (
-      <Card className={cls('p-4 relative overflow-hidden bg-gradient-to-br from-emerald-500/[.07] to-transparent', delta && delta.d > 0 && 'glow')}>
+      <Card className={cls('glow-edge p-4', delta && delta.d > 0 && 'glow')} style={{ '--accent': '#38bdf8' }}>
         <div className="flex gap-4 items-center">
-          <LiquidGauge pct={f.progress} color={f.progress >= 1 ? '#0ca30c' : '#10b981'} />
+          <LiquidGauge pct={f.progress} color={f.progress >= 1 ? '#10b981' : '#38bdf8'} />
           <div className="flex-1 min-w-0 relative">
             <DeltaChip delta={delta} />
-            <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1"><Icon name="ShieldCheck" size={13} />{f.name}</p>
+            <p className="text-xs font-semibold t-savings inline-flex items-center gap-1"><Icon name="ShieldCheck" size={13} />{f.name}</p>
             <p className="text-[26px] leading-8 font-extrabold tracking-tight mt-0.5"><AnimatedMoney value={f.balance} /></p>
             <p className="text-xs text-slate-500">of <span className="num">{fmt(f.target)}</span> target{f.targetMode === 'months' ? ` · ${f.targetMonths} months of essentials` : ''}</p>
             {f.monthsCovered != null && <p className="text-xs mt-1 font-medium">{f.monthsCovered >= f.targetMonths && f.targetMode === 'months' ? '🎉 ' : ''}Covers <span className="num">{f.monthsCovered.toFixed(1)}</span> months of essentials</p>}
           </div>
         </div>
         {f.essentials > 0 && <div className="mt-4">
-          <GrowBar liquid value={(f.monthsCovered || 0) / maxMonths} color="linear-gradient(90deg,#6ee7b7,#10b981 45%,#047857)" h="h-2.5">
+          <GrowBar liquid value={(f.monthsCovered || 0) / maxMonths} color="linear-gradient(90deg,#a5f3fc,#38bdf8 45%,#2563eb)" glow="rgba(56,189,248,.75)" h="h-3">
             {milestones.map((m) => <span key={m} className="absolute top-0 bottom-0 w-0.5 bg-white/80 dark:bg-slate-900/80" style={{ left: `${(m / maxMonths) * 100}%` }} />)}
           </GrowBar>
           <div className="relative h-4 mt-1 text-[10px] text-slate-400">{milestones.map((m) => <span key={m} className={cls('absolute whitespace-nowrap', m === maxMonths ? '-translate-x-full' : '-translate-x-1/2')} style={{ left: `${(m / maxMonths) * 100}%` }}>{m} mo</span>)}</div>
@@ -2595,9 +2717,9 @@
     const color = FUND_COLORS[g.color % FUND_COLORS.length];
     const done = g.target > 0 && g.balance >= g.target;
     return (
-      <Card className={cls('p-4 relative', delta && delta.d > 0 && 'glow')}>
+      <Card className={cls('glow-edge p-4', delta && delta.d > 0 && 'glow')} style={{ '--accent': color }}>
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-[14px] grid place-items-center text-white shrink-0" style={{ background: `linear-gradient(135deg, ${color}cc, ${color})`, boxShadow: `0 8px 16px -8px ${color}` }}><Icon name={g.icon} size={18} /></div>
+          <div className="w-10 h-10 rounded-[14px] grid place-items-center text-white shrink-0" style={{ background: `linear-gradient(135deg, ${color}aa, ${color})`, boxShadow: `inset 0 1px 0 rgba(255,255,255,.3), 0 8px 18px -8px ${color}` }}><Icon name={g.icon} size={18} /></div>
           <div className="flex-1 min-w-0 relative">
             <DeltaChip delta={delta} />
             <p className="font-semibold truncate">{g.name}</p>
@@ -2605,7 +2727,7 @@
           </div>
           <span className="num text-sm font-bold" style={{ color }}>{Math.round(Math.min(1, g.progress) * 100)}%</span>
         </div>
-        <div className="mt-3"><GrowBar liquid h="h-3" value={g.progress} color={`linear-gradient(90deg, ${color}88, ${color})`} /></div>
+        <div className="mt-3"><GrowBar liquid h="h-3" value={g.progress} color={`linear-gradient(90deg, ${color}77, ${color})`} glow={`${color}bb`} /></div>
         <p className="text-xs text-slate-500 mt-2">{done ? '🎉 Goal reached!' : g.perMonthNeeded ? `Save ${fmt(g.perMonthNeeded)}/month to reach it on time.` : `${fmt(Math.max(0, g.target - g.balance))} to go.`}</p>
         <div className="flex gap-2 mt-3">
           <Button variant="secondary" className="flex-1 !h-9 !text-sm" onClick={() => onMove('add')}><Icon name="Plus" size={15} />Add Funds</Button>
@@ -2856,7 +2978,7 @@
       <>
         <div className="fixed inset-x-0 z-30 pointer-events-none" style={{ bottom: 'calc(6.25rem + env(safe-area-inset-bottom))' }}>
           <div className="max-w-lg mx-auto px-4 flex justify-end">
-            <button onClick={() => setOpen(true)} aria-label="Quick Log Entry" className="press fab-in press pointer-events-auto h-14 pl-4 pr-5 rounded-[20px] text-white font-bold inline-flex items-center gap-2 bg-gradient-to-br from-brand-500 to-emerald-700 shadow-[0_14px_28px_-10px_rgba(5,150,105,.75),inset_0_1px_0_rgba(255,255,255,.3)] active:scale-95">
+            <button onClick={() => setOpen(true)} aria-label="Quick Log Entry" className="press fab-in pointer-events-auto h-14 pl-4 pr-5 rounded-[22px] text-white font-bold inline-flex items-center gap-2 bg-gradient-to-br from-emerald-300 via-brand-500 to-teal-700 ring-1 ring-inset ring-white/25 shadow-[0_16px_34px_-10px_rgba(16,185,129,.85),0_0_0_1px_rgba(16,185,129,.25),inset_0_1px_0_rgba(255,255,255,.35)] active:scale-95">
               <Icon name="Plus" size={22} strokeWidth={2.5} />Quick Log
             </button>
           </div>
@@ -3085,7 +3207,7 @@
           <Row icon="Sparkles" label="Load sample data" sub="Adds demo records (merge)" onClick={loadSample}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
           <Row icon="Trash2" label="Erase all data" danger onClick={wipe} />
         </Card>
-        <p className="text-center text-xs text-slate-400 mt-6">Centric Wealth · offline-first · v1.0.0</p>
+        <p className="text-center text-xs text-slate-400 mt-6" data-testid="app-version">Centric Wealth v{APP_VERSION} · statement reader v{window.StatementParser ? StatementParser.version : '?'}</p>
         <Sheet open={rulesOpen} title="Category rules" onClose={() => setRulesOpen(false)}><CategoryRules /></Sheet>
       </div>
     );
@@ -3140,6 +3262,7 @@
   }
 
   /* ================================================================= APP */
+  const APP_VERSION = '1.16.0'; // keep in step with sw.js VERSION and the ?v= on the script tags
   const TABS = [
     { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     { id: 'transactions', label: 'Activity', aria: 'Transactions', icon: 'ArrowLeftRight' },
@@ -3265,16 +3388,18 @@
           </main>
 
           <nav className="fixed inset-x-0 bottom-0 z-40 px-3 pointer-events-none" style={{ paddingBottom: 'max(.6rem, env(safe-area-inset-bottom))' }} aria-label="Main">
-            <div className="glass pointer-events-auto relative max-w-lg mx-auto grid grid-cols-6 rounded-[26px] p-1.5">
+            <div className="glass pointer-events-auto relative max-w-lg mx-auto grid grid-cols-6 rounded-[28px] p-1.5">
               {(() => { const i = Math.max(0, TABS.findIndex((t) => t.id === tab)); return (
-                <span aria-hidden="true" className="absolute top-1.5 bottom-1.5 left-1.5 rounded-[20px] bg-gradient-to-b from-brand-500/15 to-brand-500/[.07] dark:from-brand-400/20 dark:to-brand-400/[.06] ring-1 ring-brand-500/15 transition-transform duration-300 ease-out"
-                  style={{ width: 'calc((100% - .75rem) / 6)', transform: `translateX(${i * 100}%)` }} />); })()}
+                <span aria-hidden="true" className="absolute top-1.5 bottom-1.5 left-1.5 rounded-[22px] bg-gradient-to-b from-brand-500/20 to-brand-500/[.06] dark:from-brand-400/25 dark:to-brand-400/[.05] ring-1 ring-inset ring-brand-500/20 dark:ring-brand-400/25 shadow-[0_6px_18px_-6px_rgba(16,185,129,.55)] transition-transform duration-500 ease-spring"
+                  style={{ width: 'calc((100% - .75rem) / 6)', transform: `translateX(${i * 100}%)` }}>
+                  <span className="absolute left-1/2 -translate-x-1/2 -bottom-[3px] w-5 h-[3px] rounded-full bg-brand-400 shadow-[0_0_10px_2px_rgba(52,211,153,.8)]" />
+                </span>); })()}
               {TABS.map((t) => {
                 const active = tab === t.id;
                 return (
                   <button key={t.id} onClick={() => go(t.id)} aria-label={t.aria || t.label} aria-current={active ? 'page' : undefined}
-                    className={cls('press relative z-10 flex flex-col items-center justify-center gap-0.5 h-[52px] text-[10px] min-[410px]:text-[11px] tracking-[-0.01em] font-semibold min-w-0 rounded-[20px]', active ? 'text-brand-700 dark:text-brand-400' : 'text-slate-500 dark:text-slate-400')}>
-                    <Icon name={t.icon} size={20} strokeWidth={active ? 2.4 : 2} className={cls('transition-transform duration-300 ease-out', active && '-translate-y-px scale-110')} />
+                    className={cls('press relative z-10 flex flex-col items-center justify-center gap-0.5 h-[52px] text-[10px] min-[410px]:text-[11px] tracking-[-0.01em] font-semibold min-w-0 rounded-[22px]', active ? 'text-brand-700 dark:text-brand-300' : 'text-slate-500 dark:text-slate-400')}>
+                    <Icon name={t.icon} size={20} strokeWidth={active ? 2.4 : 2} className={cls('transition-all duration-300 ease-spring', active && '-translate-y-px scale-110 drop-shadow-[0_0_8px_rgba(52,211,153,.7)]')} />
                     <span className="max-w-full truncate">{t.label}</span>
                   </button>
                 );
@@ -3293,7 +3418,13 @@
 
   // Service worker for offline support (requires HTTPS or localhost — GitHub Pages is HTTPS).
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('SW registration failed', e)));
+    // When a new version takes over (after a deploy), reload once so every file is the new one.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloading) { reloading = true; location.reload(); } });
+    addEventListener('load', () => navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+      .then((reg) => { reg.update().catch(() => {}); document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && reg.update().catch(() => {})); })
+      .catch((e) => console.warn('SW registration failed', e)));
   }
   </script>
 </body>
