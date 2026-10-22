@@ -203,57 +203,100 @@
   }
 
   /* ======================================================================
+   * Text normalisation for matching
+   * "PUBLIX #1234 TAMPA"   -> "publix tampa"
+   * "UBER   *TRIP HELP.UBER.COM" -> "uber trip help uber com"
+   * "APPLE.COM/BILL 866-712-7753" -> "apple com bill"
+   * Lower-case, then everything that isn't a letter (digits, #, *, /, ., -, ') becomes a space,
+   * and runs of spaces collapse. Keywords go through the same function, so "at&t" matches "AT&T BILL"
+   * and "trader joe's" matches "TRADER JOE'S #552".
+   * ==================================================================== */
+  // Bank boilerplate that carries no merchant meaning once punctuation is gone.
+  const NOISE_WORDS = /\b(?:pos|debit|credit|card|purchase|recurring|authorized|on|checkcard|visa|mc|mastercard|ach|web|ppd|id|ref|trace|txn|sq|tst|pp|pypl|sp|dd|ck|py|fs|wpy|in)\b/g;
+  function normalizeText(s) {
+    return String(s || '').toLowerCase()
+      .replace(/[^a-z]+/g, ' ')   // drop digits, store numbers and symbols
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  /** The text categories are matched against: cleaned description, normalised, with bank noise removed. */
+  function normalizeDescription(raw) {
+    const base = normalizeText(cleanDescription(raw));
+    const quiet = base.replace(NOISE_WORDS, ' ').replace(/\s+/g, ' ').trim();
+    return quiet || base;
+  }
+  // Keyword in normalised text, as whole words ("uber" matches "uber trip" but "cab" doesn't match "cabelas").
+  const kwRe = (keywords) => {
+    const alts = [...new Set(keywords.map(normalizeText).filter(Boolean))].sort((x, y) => y.length - x.length).map(escapeRe);
+    return alts.length ? new RegExp(`(?:^| )(?:${alts.join('|')})(?= |$)`) : null;
+  };
+
+  /* ======================================================================
    * Categorisation - keyword/regex rule dictionary (edit freely)
-   * Evaluated in order; first match wins. Keywords match on word boundaries,
-   * case-insensitively, against the cleaned description.
+   * Evaluated in order; first match wins. Keywords match whole words in the normalised description
+   * (see normalizeText). Order matters where merchants overlap:
+   *   Dining before Transport ("uber eats" vs "uber"); Transport before Utilities (gas stations vs the gas bill);
+   *   "apple store" (Shopping) before Subscriptions ("apple"); Groceries (Walmart, Target) before Shopping.
    * ==================================================================== */
   const RULES = [
-    { category: 'Transfers', patterns: [/payment\s*[-\u2013]?\s*thank\s*you/i, /\b(?:to|from)\s+(?:chk|sav|checking|savings)\b/i], keywords: ['payment thank you', 'autopay payment', 'online payment thank', 'credit card payment', 'card payment', 'transfer to', 'transfer from', 'online transfer', 'xfer', 'zelle', 'venmo', 'cash app', 'paypal transfer', 'internal transfer', 'savings transfer', 'directpay', 'autopay', 'epayment', 'e-payment', 'crd autopay', 'credit crd', 'card pmt', 'online pmt', 'applecard', 'amex epayment', 'card services', 'cardmember serv'] },
+    { category: 'Transfers', patterns: [/payment\s*[-\u2013]?\s*thank\s*you/i, /\b(?:to|from)\s+(?:chk|sav|checking|savings)\b/i], keywords: ['payment thank you', 'autopay payment', 'online payment thank', 'credit card payment', 'card payment', 'transfer to', 'transfer from', 'online transfer', 'xfer', 'zelle', 'venmo', 'cash app', 'paypal transfer', 'internal transfer', 'savings transfer', 'directpay', 'card autopay', 'amex autopay', 'discover autopay', 'citi autopay', 'capital one autopay', 'chase autopay', 'epayment', 'e-payment', 'crd autopay', 'credit crd', 'card pmt', 'online pmt', 'applecard', 'apple card gs bank', 'amex epayment', 'card services', 'cardmember serv'] },
     { category: 'Income', sign: 'in', keywords: ['payroll', 'direct dep', 'direct deposit', 'salary', 'paycheck', 'adp', 'gusto', 'paychex', 'irs treas', 'tax refund', 'interest paid', 'interest earned', 'dividend', 'unemployment', 'social security', 'ssa treas', 'pension'] },
     { category: 'Refunds', sign: 'in', keywords: ['refund', 'return credit', 'reversal', 'chargeback', 'cashback', 'cash back reward', 'statement credit', 'rebate', 'return'] },
-    { category: 'Subscriptions', keywords: ['netflix', 'spotify', 'hulu', 'disney plus', 'disneyplus', 'disney+', 'hbo max', 'max.com', 'paramount', 'peacock', 'youtube premium', 'youtube', 'apple services', 'icloud', 'apple music', 'apple tv', 'amazon prime', 'prime video', 'audible', 'kindle unlimited', 'siriusxm', 'pandora', 'tidal', 'dropbox', 'google storage', 'google one', 'microsoft 365', 'office 365', 'adobe', 'canva', 'notion', 'chatgpt', 'openai', 'patreon', 'onlyfans', 'substack', 'nytimes', 'new york times', 'wsj', 'washington post', 'medium.com', 'duolingo', 'headspace', 'calm.com', 'peloton', 'planet fitness', 'la fitness', 'gym', 'xbox game pass', 'playstation plus', 'nintendo online', 'twitch', 'crunchyroll', 'masterclass', 'linkedin premium', 'nordvpn', 'expressvpn', 'surfshark', '1password', 'lastpass', 'subscription', 'membership', 'monthly plan'] },
-    { category: 'Utilities', keywords: ['electric', 'power company', 'energy', 'duke energy', 'fpl', 'pg&e', 'con ed', 'coned', 'water', 'sewer', 'gas company', 'natural gas', 'utility', 'utilities', 'waste management', 'trash', 'comcast', 'xfinity', 'spectrum', 'cox comm', 'verizon', 'at&t', 'att', 't-mobile', 'tmobile', 'sprint', 'mint mobile', 'cricket', 'boost mobile', 'google fi', 'frontier', 'centurylink', 'internet', 'broadband'] },
-    { category: 'Groceries', keywords: ['grocery', 'groceries', 'supermarket', 'whole foods', 'wholefds', 'trader joe', 'trader joes', 'kroger', 'publix', 'safeway', 'albertsons', 'aldi', 'lidl', 'wegmans', 'heb', 'h-e-b', 'food lion', 'giant eagle', 'stop & shop', 'winn-dixie', 'winn dixie', 'sprouts', 'meijer', 'costco', 'sams club', "sam's club", 'bjs wholesale', 'instacart', 'fresh market', 'food 4 less', 'ralphs', 'vons', 'smart & final', 'market basket', 'save a lot', 'piggly wiggly', 'hy-vee', 'tesco', 'sainsbury', 'walmart grocery'] },
-    { category: 'Dining Out', keywords: ['restaurant', 'cafe', 'coffee', 'starbucks', 'dunkin', 'mcdonald', 'burger king', 'wendy', 'taco bell', 'chipotle', 'subway', 'chick-fil-a', 'chickfila', 'popeyes', 'kfc', 'panera', 'domino', 'pizza', 'papa john', 'five guys', 'shake shack', 'in-n-out', 'sonic drive', 'dairy queen', 'panda express', 'olive garden', 'applebee', 'chili', 'ihop', 'denny', 'waffle house', 'cracker barrel', 'buffalo wild', 'sushi', 'grill', 'bistro', 'diner', 'kitchen', 'tavern', 'pub', 'brewery', 'bakery', 'doordash', 'uber eats', 'ubereats', 'grubhub', 'postmates', 'seamless', 'caviar'], patterns: [/^tst\s?\*/i] },
-    { category: 'Transport', keywords: ['uber', 'lyft', 'taxi', 'cab', 'shell', 'exxon', 'mobil', 'chevron', 'bp', 'sunoco', 'marathon', 'speedway', 'wawa', 'sheetz', 'circle k', 'racetrac', 'quiktrip', 'qt', 'valero', 'citgo', '76', 'arco', 'gas station', 'fuel', 'parking', 'parkmobile', 'toll', 'e-zpass', 'ezpass', 'sunpass', 'fastrak', 'metro', 'transit', 'mta', 'bart', 'amtrak', 'greyhound', 'jiffy lube', 'auto repair', 'autozone', "o'reilly", 'advance auto', 'car wash', 'dmv'] },
-    { category: 'Housing', keywords: ['rent', 'mortgage', 'landlord', 'property mgmt', 'property management', 'apartments', 'hoa', 'home depot', "lowe's", 'lowes', 'menards', 'ace hardware', 'hardware'] },
-    { category: 'Health', keywords: ['pharmacy', 'cvs', 'walgreens', 'rite aid', 'doctor', 'medical', 'dental', 'dentist', 'clinic', 'hospital', 'urgent care', 'optometr', 'vision', 'labcorp', 'quest diag', 'therapy', 'physician'] },
+    { category: 'Dining Out', keywords: ['uber eats', 'ubereats', 'doordash', 'dashpass', 'door dash', 'grubhub', 'grub hub', 'postmates', 'seamless', 'caviar', 'starbucks', 'starbuck', 'sbux', 'dunkin', 'mcdonald', 'mcdonalds', 'mcdonald s', 'burger king', 'wendy', 'wendys', 'taco bell', 'chipotle', 'subway', 'chick fil a', 'chickfila', 'popeyes', 'kfc', 'panera', 'domino', 'dominos', 'pizza', 'papa john', 'papa johns', 'five guys', 'shake shack', 'in n out', 'sonic drive', 'dairy queen', 'panda express', 'olive garden', 'applebee', 'applebees', 'chili s', 'chilis', 'ihop', 'denny', 'dennys', 'waffle house', 'cracker barrel', 'buffalo wild', 'jersey mike', 'jimmy john', 'firehouse subs', 'wingstop', 'zaxby', 'cava', 'sweetgreen', 'tim hortons', 'restaurant', 'cafe', 'coffee', 'sushi', 'grill', 'bistro', 'diner', 'kitchen', 'tavern', 'pub', 'brewery', 'bakery', 'taqueria', 'bbq'], patterns: [/^tst\s?\*/i] },
+    { category: 'Transport', keywords: ['uber', 'uber trip', 'lyft', 'taxi', 'cab', 'shell', 'shell oil', 'exxon', 'exxonmobil', 'mobil', 'chevron', 'bp', 'sunoco', 'marathon', 'speedway', 'wawa', 'sheetz', 'circle k', 'racetrac', 'race trac', 'quiktrip', 'qt', 'valero', 'citgo', 'arco', 'phillips', 'murphy usa', 'casey s', 'caseys', 'pilot', 'flying j', 'loves travel', 'gas station', 'gasoline', 'fuel', 'parking', 'parkmobile', 'toll', 'tolls', 'e zpass', 'ezpass', 'sunpass', 'fastrak', 'transit', 'metro transit', 'metrorail', 'metrobus', 'mta', 'bart', 'septa', 'marta', 'brightline', 'amtrak', 'greyhound', 'jiffy lube', 'auto repair', 'autozone', 'o reilly', 'advance auto', 'car wash', 'dmv', 'tesla supercharger', 'chargepoint'] },
+    { category: 'Utilities', keywords: ['electric', 'electricity', 'power company', 'energy', 'duke energy', 'fpl', 'fla power', 'florida power', 'teco', 'pg e', 'con ed', 'coned', 'water', 'water utility', 'sewer', 'gas', 'gas bill', 'gas company', 'natural gas', 'peoples gas', 'utility', 'utilities', 'waste management', 'trash', 'verizon', 'verizon wireless', 'vzwrlss', 'at t', 'att', 'att bill', 't mobile', 'tmobile', 'sprint', 'mint mobile', 'cricket', 'boost mobile', 'google fi', 'spectrum', 'cox comm', 'frontier', 'centurylink', 'internet', 'broadband'] },
+    { category: 'Shopping', keywords: ['apple store', 'apple online store'] },
+    { category: 'Subscriptions', keywords: ['apple', 'apple com', 'apple com bill', 'itunes', 'icloud', 'apple services', 'apple music', 'apple tv', 'xfinity', 'comcast', 'netflix', 'spotify', 'hulu', 'amazon prime', 'prime video', 'amzn prime', 'google', 'google storage', 'google one', 'google play', 'youtube', 'youtube premium', 'disney plus', 'disneyplus', 'hbo max', 'max com', 'paramount', 'peacock', 'audible', 'kindle unlimited', 'siriusxm', 'sirius xm', 'pandora', 'tidal', 'dropbox', 'microsoft', 'office', 'adobe', 'canva', 'notion', 'chatgpt', 'openai', 'patreon', 'substack', 'nytimes', 'new york times', 'wsj', 'washington post', 'duolingo', 'headspace', 'calm com', 'peloton', 'planet fitness', 'la fitness', 'gym', 'xbox game pass', 'playstation plus', 'nintendo online', 'twitch', 'crunchyroll', 'masterclass', 'linkedin premium', 'nordvpn', 'expressvpn', 'surfshark', 'password', 'lastpass', 'subscription', 'membership', 'monthly plan'] },
+    { category: 'Groceries', keywords: ['publix', 'walmart', 'wal mart', 'wm supercenter', 'walmart grocery', 'target', 'trader joe', 'trader joes', 'trader joe s', 'whole foods', 'wholefds', 'wfm', 'aldi', 'winn dixie', 'winndixie', 'grocery', 'groceries', 'supermarket', 'kroger', 'safeway', 'albertsons', 'lidl', 'wegmans', 'heb', 'h e b', 'food lion', 'giant eagle', 'stop shop', 'sprouts', 'meijer', 'costco', 'sams club', 'sam s club', 'bjs wholesale', 'instacart', 'fresh market', 'food less', 'ralphs', 'vons', 'smart final', 'market basket', 'save a lot', 'piggly wiggly', 'hy vee', 'harris teeter', 'tesco', 'sainsbury'] },
+    { category: 'Housing', keywords: ['rent', 'mortgage', 'landlord', 'property mgmt', 'property management', 'apartments', 'hoa', 'home depot', 'lowe s', 'lowes', 'menards', 'ace hardware', 'hardware'] },
+    { category: 'Health', keywords: ['pharmacy', 'cvs', 'walgreens', 'rite aid', 'doctor', 'medical', 'dental', 'dentist', 'clinic', 'hospital', 'urgent care', 'optometrist', 'vision', 'labcorp', 'quest diag', 'therapy', 'physician'] },
     { category: 'Insurance', keywords: ['insurance', 'geico', 'progressive', 'state farm', 'allstate', 'liberty mutual', 'usaa', 'nationwide', 'farmers ins', 'lemonade', 'metlife', 'aflac', 'blue cross', 'aetna', 'cigna', 'humana', 'kaiser'] },
     { category: 'Debt Payment', keywords: ['loan payment', 'student loan', 'navient', 'nelnet', 'sallie mae', 'mohela', 'great lakes', 'auto loan', 'car payment', 'sofi loan', 'lending club', 'upstart', 'affirm', 'klarna', 'afterpay'] },
     { category: 'Fees & Interest', keywords: ['interest charge', 'finance charge', 'late fee', 'overdraft', 'nsf fee', 'service fee', 'monthly fee', 'maintenance fee', 'atm fee', 'foreign transaction fee', 'annual fee', 'wire fee'] },
     { category: 'Cash', keywords: ['atm withdrawal', 'atm', 'cash withdrawal'] },
-    { category: 'Travel', keywords: ['airline', 'airlines', 'delta air', 'united air', 'american air', 'southwest', 'jetblue', 'spirit air', 'frontier air', 'alaska air', 'expedia', 'booking.com', 'airbnb', 'vrbo', 'hotel', 'marriott', 'hilton', 'hyatt', 'holiday inn', 'motel', 'hertz', 'enterprise rent', 'avis', 'budget rent'] },
+    { category: 'Travel', keywords: ['airline', 'airlines', 'delta air', 'united air', 'american air', 'southwest', 'jetblue', 'spirit air', 'frontier air', 'alaska air', 'expedia', 'booking com', 'airbnb', 'vrbo', 'hotel', 'marriott', 'hilton', 'hyatt', 'holiday inn', 'motel', 'hertz', 'enterprise rent', 'avis', 'budget rent'] },
     { category: 'Entertainment', keywords: ['cinema', 'theater', 'theatre', 'amc', 'regal', 'ticketmaster', 'stubhub', 'eventbrite', 'steam', 'playstation', 'xbox', 'nintendo', 'bowling', 'concert', 'museum'] },
     { category: 'Education', keywords: ['tuition', 'university', 'college', 'school', 'coursera', 'udemy', 'chegg', 'bookstore'] },
-    { category: 'Shopping', keywords: ['amazon', 'amzn', 'amazon mktplace', 'amazon mktp', 'target', 'walmart', 'best buy', 'ebay', 'etsy', 'macy', 'kohl', 'nordstrom', 'tj maxx', 'tjmaxx', 'marshalls', 'ross stores', 'old navy', 'gap', 'h&m', 'zara', 'ikea', 'wayfair', 'dollar tree', 'dollar general', 'family dollar', 'five below', 'shein', 'temu', 'apple store', 'nike', 'sephora', 'ulta'] },
+    { category: 'Shopping', keywords: ['amazon', 'amzn', 'amazon mktplace', 'amzn mktp', 'best buy', 'ebay', 'etsy', 'macy', 'macys', 'kohl', 'kohls', 'nordstrom', 'tj maxx', 'tjmaxx', 'marshalls', 'ross stores', 'old navy', 'gap', 'h m', 'zara', 'ikea', 'wayfair', 'dollar tree', 'dollar general', 'family dollar', 'five below', 'shein', 'temu', 'nike', 'sephora', 'ulta'] },
   ];
 
-  // Pre-compile: one alternation regex per rule. Word-ish boundaries that tolerate &, ', - in keywords.
-  const compileRule = (r) => ({
-    ...r,
-    re: r.keywords && r.keywords.length
-      ? new RegExp(`(?:^|[^a-z0-9])(?:${r.keywords.map((k) => escapeRe(k.toLowerCase())).join('|')})(?=$|[^a-z0-9])`, 'i')
-      : null,
-  });
-  let COMPILED = RULES.map(compileRule);
+  let COMPILED = RULES.map((r) => ({ ...r, re: r.keywords ? kwRe(r.keywords) : null }));
 
   /**
-   * Categorise one transaction.
-   * customRules: [{ match: string|RegExp, category, sign?: 'in'|'out' }] - checked before built-ins.
+   * Your own merchant -> category mappings (saved by the app when you recategorise a transaction).
+   * rule: { match: string (a merchant phrase, normalised on compare) | RegExp, category, sign?: 'in'|'out' }
+   * Longer phrases win over shorter ones, so "uber eats" can beat "uber".
+   * Returns the rule that matched, or null.
+   */
+  function matchCustomRule(description, amount, customRules = []) {
+    if (!customRules || !customRules.length) return null;
+    const raw = String(description || ''), norm = ' ' + normalizeDescription(raw) + ' ', full = ' ' + normalizeText(raw) + ' ';
+    const dir = amount > 0 ? 'in' : 'out';
+    const sorted = [...customRules].sort((a, b) => String(b.match).length - String(a.match).length);
+    for (const r of sorted) {
+      if (!r || !r.category || (r.sign && r.sign !== dir)) continue;
+      if (r.match instanceof RegExp) { if (r.match.test(raw)) return r; continue; }
+      const k = normalizeText(r.match);
+      if (k && (norm.includes(' ' + k + ' ') || full.includes(' ' + k + ' '))) return r;
+    }
+    return null;
+  }
+
+  /**
+   * Categorise one transaction from its description. Returns 'Uncategorized' when nothing matches
+   * (money in with no match is 'Income').
+   * customRules: see matchCustomRule - checked before the built-in dictionary.
    */
   function categorize(description, amount, customRules = []) {
-    const desc = cleanDescription(description);
-    const hay = ' ' + desc.toLowerCase() + ' ';
+    const custom = matchCustomRule(description, amount, customRules);
+    if (custom) return custom.category;
     const raw = String(description || '');
+    const desc = cleanDescription(raw);
+    const norm = normalizeText(desc); // keeps words like "card" so "credit card payment" still reads as a transfer
     const dir = amount > 0 ? 'in' : 'out';
-    for (const r of customRules) {
-      if (r.sign && r.sign !== dir) continue;
-      const hit = r.match instanceof RegExp ? r.match.test(raw) || r.match.test(desc) : hay.includes(String(r.match).toLowerCase());
-      if (hit) return r.category;
-    }
     for (const r of COMPILED) {
       if (r.sign && r.sign !== dir) continue;
-      if ((r.re && r.re.test(hay)) || (r.patterns && r.patterns.some((p) => p.test(raw) || p.test(desc)))) return r.category;
+      if ((r.re && r.re.test(norm)) || (r.patterns && r.patterns.some((p) => p.test(raw) || p.test(desc)))) return r.category;
     }
     return dir === 'in' ? 'Income' : 'Uncategorized';
   }
@@ -833,7 +876,7 @@
 
   // Parser categories -> the app's category list.
   const APP_CATEGORY = {
-    'Dining Out': 'Dining', 'Uncategorized': 'Other', 'Fees & Interest': 'Other', 'Cash': 'Other', 'Transfers': 'Other', 'Refunds': 'Refund',
+    'Dining Out': 'Dining', 'Fees & Interest': 'Other', 'Cash': 'Other', 'Transfers': 'Other', 'Refunds': 'Refund',
   };
   const toAppCategory = (cat, amount, desc) => {
     if (amount > 0) {
@@ -859,8 +902,15 @@
    *   credit: charge -> expense (raises the amount owed); payment / refund / statement credit ->
    *           transfer "Card Payment" / "Card Credit" (a balance adjustment that lowers the amount owed)
    */
+  const TRANSFER_CATS = new Set(['Transfer', 'Card Payment', 'Card Credit', 'Money Lent', 'Money Borrowed', 'Loan Repayment', 'Loan Repaid to Me', 'Transfers']);
   function classify(t, accountType) {
     const out = t.amount < 0;
+    if (t.userCategory) {
+      // Mapping you saved: keep your category; card payments/credits on a card stay balance adjustments.
+      if (accountType === 'credit' && !out) return { type: 'transfer', category: TRANSFER_CATS.has(t.category) ? (t.category === 'Transfers' ? 'Card Payment' : t.category) : 'Card Credit' };
+      if (TRANSFER_CATS.has(t.category)) return { type: 'transfer', category: t.category === 'Transfers' ? 'Transfer' : t.category };
+      return { type: out ? 'expense' : 'income', category: t.category };
+    }
     if (accountType === 'credit') {
       if (out) return { type: 'expense', category: toAppCategory(t.category, t.amount, t.description) };
       const isPayment = CARD_PAYMENT_HINT.test(t.description) || t.category === 'Transfers';
@@ -961,9 +1011,12 @@
     // Clean + categorise.
     let transactions = rows.map((r) => {
       const description = cleanDescription(r.rawDescription);
-      let category = categorize(r.rawDescription, r.amount, opts.customRules);
+      // Your saved mappings use the app's own category names and win over everything else.
+      const custom = matchCustomRule(r.rawDescription, r.amount, opts.customRules);
+      if (custom) return { date: r.date, description, amount: r.amount, category: custom.category, isRecurring: false, userCategory: true };
+      let category = categorize(r.rawDescription, r.amount);
       if (category === 'Uncategorized' && r.bankCategory) {
-        const viaBank = categorize(r.bankCategory, r.amount, opts.customRules);
+        const viaBank = categorize(r.bankCategory, r.amount);
         if (viaBank !== 'Uncategorized') category = viaBank;
       }
       return { date: r.date, description, amount: r.amount, category, isRecurring: false };
@@ -1037,6 +1090,9 @@
     attachDropZone,
     // Building blocks (exposed for custom UIs and tests)
     categorize,
+    matchCustomRule,
+    normalizeText,
+    normalizeDescription,
     detectRecurring,
     cleanDescription,
     merchantKey,
@@ -1048,7 +1104,7 @@
     getStoredTransactions,
     RULES,
     /** Replace or extend the built-in rule dictionary at runtime. */
-    setRules(rules) { RULES.length = 0; RULES.push(...rules); COMPILED = RULES.map(compileRule); },
+    setRules(rules) { RULES.length = 0; RULES.push(...rules); COMPILED = RULES.map((r) => ({ ...r, re: r.keywords ? kwRe(r.keywords) : null })); },
     StatementParserError,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

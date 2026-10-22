@@ -342,7 +342,7 @@
     const n = parseFloat(s); return isNaN(n) ? NaN : neg ? -n : n;
   };
 
-  const EXPENSE_CATEGORIES = ['Housing', 'Utilities', 'Groceries', 'Dining', 'Transport', 'Health', 'Insurance', 'Shopping', 'Entertainment', 'Subscriptions', 'Debt Payment', 'Education', 'Travel', 'Gifts', 'Personal Payments', 'Other'];
+  const EXPENSE_CATEGORIES = ['Housing', 'Utilities', 'Groceries', 'Dining', 'Transport', 'Health', 'Insurance', 'Shopping', 'Entertainment', 'Subscriptions', 'Debt Payment', 'Education', 'Travel', 'Gifts', 'Personal Payments', 'Other', 'Uncategorized'];
   const INCOME_CATEGORIES = ['Salary', 'Freelance', 'Interest', 'Refund', 'Gift', 'Payment Received', 'Other Income'];
   const DEBT_TYPES = ['Credit Card', 'Student Loan', 'Auto Loan', 'Mortgage', 'Personal Loan', 'Medical', 'Other'];
   const ACCOUNT_TYPES = ['Checking', 'Savings', 'Cash', 'Investment', 'Retirement', 'Property', 'Other'];
@@ -936,6 +936,25 @@
     );
   }
 
+  /* ===================================================== CATEGORY RULES */
+  // Your merchant -> category mappings live in IndexedDB settings ("categoryRules") and are applied on every import.
+  const ruleSign = (t) => (t.type === 'income' || (t.type !== 'expense' && t.direction === 'in') ? 'in' : 'out');
+  const normText = (x) => (window.StatementParser ? StatementParser.normalizeText(x) : String(x || '').toLowerCase().replace(/[^a-z]+/g, ' ').trim());
+  // "PUBLIX #1534 TAMPA FL" -> "publix"; "BLUE BOTTLE COFFEE" -> "blue bottle". Editable before saving.
+  function suggestRulePhrase(desc) {
+    const words = (window.StatementParser ? StatementParser.normalizeDescription(desc) : normText(desc)).split(' ').filter((w) => w.length > 1);
+    if (!words.length) return '';
+    return words[0].length >= 5 ? words[0] : words.slice(0, 2).join(' ');
+  }
+  const ruleHits = (rule, t) => !!StatementParser.matchCustomRule(t.description, ruleSign(t) === 'in' ? 1 : -1, [rule]);
+  async function saveCategoryRule(settings, rule) {
+    const k = normText(rule.match);
+    const rules = (settings.categoryRules || []).filter((r) => !(normText(r.match) === k && (r.sign || 'out') === rule.sign));
+    rules.push({ ...rule, match: k, createdAt: new Date().toISOString() });
+    await DB.setSetting('categoryRules', rules);
+    return rules;
+  }
+
   /* ========================================================= TRANSACTIONS */
   function TxRow({ t, onClick }) {
     const { fmt } = useApp();
@@ -949,7 +968,7 @@
         <div className={cls('w-10 h-10 rounded-xl grid place-items-center shrink-0', tone)}><Icon name={icon} size={18} /></div>
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{t.description || t.category}</p>
-          <p className="text-xs text-slate-500 truncate">{[t.counterparty, t.category, t.accountName, prettyDate(t.date)].filter(Boolean).join(' · ')}</p>
+          <p className="text-xs text-slate-500 truncate">{t.category === 'Uncategorized' && <span className="inline-flex items-center gap-0.5 mr-1 px-1.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-300 font-semibold"><Icon name="Tag" size={10} />Needs category</span>}{[t.counterparty, t.category === 'Uncategorized' ? null : t.category, t.accountName, prettyDate(t.date)].filter(Boolean).join(' · ')}</p>
         </div>
         <p className={cls('num font-semibold', income && 'text-emerald-600 dark:text-emerald-400', transfer && 'text-slate-500 dark:text-slate-400')}>{moneyIn ? '+' : '−'}{fmt(t.amount)}</p>
       </button>
@@ -957,7 +976,7 @@
   }
 
   function TxForm({ initial, onDone }) {
-    const { data, save, remove, toast } = useApp();
+    const { data, save, remove, toast, reload } = useApp();
     const [f, setF] = useState(() => initial || { type: 'expense', amount: '', category: 'Groceries', date: todayISO(), description: '', accountType: null, accountName: '' });
     const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target ? e.target.value : e }));
     const credit = f.accountType === 'credit';
@@ -975,6 +994,16 @@
     const typeOptions = credit
       ? [{ value: 'expense', label: 'Charge' }, { value: 'transfer', label: 'Payment / Credit' }]
       : [{ value: 'expense', label: 'Expense' }, { value: 'income', label: 'Income' }, { value: 'transfer', label: 'Transfer' }];
+    // Recategorising an imported/known merchant: offer to remember it and fix the matching transactions too.
+    const recat = !!initial && f.category !== initial.category && f.type !== 'transfer' && f.category !== 'Uncategorized' && !!String(f.description || '').trim();
+    const [remember, setRemember] = useState(true);
+    const [phrase, setPhrase] = useState('');
+    const [applyOthers, setApplyOthers] = useState(true);
+    useEffect(() => { if (recat && !phrase) setPhrase(suggestRulePhrase(f.description)); }, [recat]);
+    const sign = f.type === 'income' ? 'in' : 'out';
+    const rule = recat && remember && normText(phrase) ? { match: phrase, category: f.category, sign, type: f.type } : null;
+    const others = useMemo(() => (rule ? data.transactions.filter((t) => t.id !== initial.id && t.type === f.type && t.category !== f.category && ruleHits(rule, t)) : []), [rule && rule.match, rule && rule.category, f.type, data.transactions]);
+    const phraseMatchesThis = !rule || ruleHits(rule, { ...f, type: f.type });
     const submit = async (e) => {
       e.preventDefault();
       const amount = round2(Math.abs(parseAmount(f.amount)));
@@ -983,7 +1012,14 @@
       const rec = { ...f, amount, direction, accountType: f.accountType || null, accountName: f.accountName || '', source: f.source || 'manual' };
       rec.hash = hashTx(rec);
       await save('transactions', rec);
-      toast(initial ? 'Transaction updated' : 'Transaction added');
+      let msg = initial ? 'Transaction updated' : 'Transaction added';
+      if (rule) {
+        await saveCategoryRule(data.settings, rule);
+        if (applyOthers && others.length) await DB.bulkPut('transactions', others.map((t) => ({ ...t, category: f.category })));
+        await reload(['settings', 'transactions']);
+        msg = `Saved. "${normText(phrase)}" will go to ${f.category}${applyOthers && others.length ? ` · ${others.length} more updated` : ''}`;
+      }
+      toast(msg);
       onDone();
     };
     return (
@@ -997,6 +1033,22 @@
           <Field label="Category"><Select options={cats.includes(f.category) ? cats : [f.category, ...cats]} value={f.category} onChange={set('category')} /></Field>
           <Field label="Date"><Input type="date" value={f.date} onChange={set('date')} /></Field>
         </div>
+        {recat && (
+          <div className="rounded-[16px] bg-brand-500/[.07] dark:bg-brand-400/[.08] p-3 space-y-2.5 fade-in" data-testid="remember-rule">
+            <label className="flex items-start gap-2.5 text-sm">
+              <input type="checkbox" className="mt-0.5 w-4 h-4 accent-emerald-600" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              <span><span className="font-semibold">Remember for future imports</span><span className="block text-xs text-slate-500">Descriptions containing this go to <b>{f.category}</b>.</span></span>
+            </label>
+            {remember && <>
+              <Input aria-label="Merchant words to match" value={phrase} onChange={(e) => setPhrase(e.target.value)} placeholder="e.g. publix" />
+              {!phraseMatchesThis && <p className="text-xs text-amber-700 dark:text-amber-300">These words don't appear in this transaction's description.</p>}
+              {others.length > 0 && <label className="flex items-start gap-2.5 text-sm">
+                <input type="checkbox" className="mt-0.5 w-4 h-4 accent-emerald-600" checked={applyOthers} onChange={(e) => setApplyOthers(e.target.checked)} />
+                <span>Also move {others.length} other matching transaction{others.length === 1 ? '' : 's'} to {f.category}</span>
+              </label>}
+            </>}
+          </div>
+        )}
         <Button type="submit" className="w-full">{initial ? 'Save changes' : 'Add transaction'}</Button>
         {initial && <Button type="button" variant="ghost" className="w-full !text-rose-600" onClick={async () => { if (confirm('Delete this transaction?')) { await remove('transactions', initial.id); toast('Deleted'); onDone(); } }}><Icon name="Trash2" size={16} />Delete</Button>}
       </form>
@@ -1010,15 +1062,18 @@
     const [type, setType] = useState('all');
     const [acct, setAcct] = useState('all');
     const [logOnly, setLogOnly] = useState(false);
+    const [needsCat, setNeedsCat] = useState(false); // all months: transactions still Uncategorized
     const [editing, setEditing] = useState(null); // null | 'new' | tx
+    const uncategorized = data.transactions.filter((t) => t.category === 'Uncategorized').length;
+    useEffect(() => { if (!uncategorized) setNeedsCat(false); }, [uncategorized]);
 
     const list = useMemo(() => data.transactions
-      .filter((t) => monthKey(t.date) === month)
+      .filter((t) => needsCat ? t.category === 'Uncategorized' : monthKey(t.date) === month)
       .filter((t) => type === 'all' || t.type === type)
       .filter((t) => acct === 'all' || acctTypeOf(t) === acct)
       .filter((t) => !logOnly || t.source === 'quick-log' || acctTypeOf(t) === 'cash')
       .filter((t) => !q || `${t.description} ${t.category} ${t.accountName || ''}`.toLowerCase().includes(q.toLowerCase()))
-      .sort((a, b) => b.date.localeCompare(a.date)), [data.transactions, month, q, type, acct, logOnly]);
+      .sort((a, b) => b.date.localeCompare(a.date)), [data.transactions, month, q, type, acct, logOnly, needsCat]);
     const groups = useMemo(() => list.reduce((g, t) => ((g[t.date] ||= []).push(t), g), {}), [list]);
     const totIn = list.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const totOut = list.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
@@ -1045,6 +1100,8 @@
         </div>
         <div className="mt-3"><Segmented value={acct} onChange={setAcct} options={ACCOUNT_FILTERS} /></div>
         <button onClick={() => setLogOnly(!logOnly)} className={cls('press mt-2 text-xs font-semibold px-3 py-1.5 rounded-full border inline-flex items-center gap-1.5', logOnly ? 'border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300' : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300')}><Icon name="Banknote" size={14} />Cash & transfer log only</button>
+        {uncategorized > 0 && <button onClick={() => setNeedsCat(!needsCat)} aria-pressed={needsCat} className={cls('press mt-2 ml-2 text-xs font-semibold px-3 py-1.5 rounded-full border inline-flex items-center gap-1.5', needsCat ? 'border-amber-500 bg-amber-500 text-white' : 'border-amber-400 text-amber-800 dark:text-amber-300')}><Icon name="Tag" size={14} />Needs category ({uncategorized})</button>}
+        {needsCat && <p className="text-xs text-slate-500 mt-2 px-1">Showing every month. Tap a transaction and pick a category; matching ones can be fixed in one go, and future imports remember it.</p>}
         <div className="mt-2"><Segmented value={type} onChange={setType} options={[{ value: 'all', label: 'All types' }, { value: 'expense', label: acct === 'credit' ? 'Charges' : 'Expenses' }, { value: 'income', label: 'Income' }, { value: 'transfer', label: acct === 'credit' ? 'Payments' : 'Transfers' }]} /></div>
 
         {list.length === 0 ? <Empty icon="Receipt" title="No transactions" body="Nothing matches this month and filter." action={<Button variant="secondary" onClick={() => setEditing('new')}>Add one</Button>} /> :
@@ -1092,7 +1149,7 @@
     const parse = async (file, pw) => {
       setBusy(true); setResult(null);
       try {
-        const report = await StatementParser.parseStatementDetailed(file, { persist: false, accountType: kind, accountName, password: pw || undefined });
+        const report = await StatementParser.parseStatementDetailed(file, { persist: false, accountType: kind, accountName, password: pw || undefined, customRules: data.settings.categoryRules || [] });
         setJob({ file, report });
         setBalance(report.meta.endingBalance != null ? String(report.meta.endingBalance) : '');
       } catch (e) { setJob({ file, error: e }); }
@@ -1238,6 +1295,7 @@
                   <Input inputMode="decimal" placeholder="0.00" value={balance} onChange={(e) => setBalance(e.target.value)} />
                 </Field>
               </div>
+              {(() => { const n = preview.fresh.filter((r) => r.category === 'Uncategorized').length, mine = preview.fresh.filter((r) => r.userCategory).length; return (n > 0 || mine > 0) && <p className="text-xs mt-3 flex gap-1.5 text-slate-600 dark:text-slate-300"><Icon name="Tags" size={14} className="shrink-0 mt-px text-brand-600" /><span>{mine > 0 && `${mine} sorted by your saved category rules. `}{n > 0 && `${n} couldn't be matched and will be Uncategorized. Tap one after importing to pick a category; it's remembered for next time.`}</span></p>; })()}
               <p className="text-xs text-slate-500 mt-3">{preview.fresh.length} new · {preview.rows.length - preview.fresh.length} already imported{job.report.warnings.length ? ` · ${job.report.warnings.length} row${job.report.warnings.length === 1 ? '' : 's'} skipped` : ''} · {parseISO(job.report.meta.dateRange[0]).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – {parseISO(job.report.meta.dateRange[1]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</p>
             </Card>
             <Card className="mt-3 divide-y divide-slate-900/[.05] dark:divide-white/[.06] overflow-hidden">
@@ -1286,7 +1344,7 @@
     const spent = Object.fromEntries(s.topCats);
     const totalLimit = data.budgets.reduce((a, b) => a + b.limit, 0);
     const totalSpent = data.budgets.reduce((a, b) => a + (spent[b.category] || 0), 0);
-    const unbudgeted = EXPENSE_CATEGORIES.filter((c) => !data.budgets.find((b) => b.category === c));
+    const unbudgeted = EXPENSE_CATEGORIES.filter((c) => c !== 'Uncategorized' && !data.budgets.find((b) => b.category === c));
 
     return (
       <div>
@@ -2678,8 +2736,51 @@
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
+  function CategoryRules() {
+    const { data, setSetting, toast, reload } = useApp();
+    const rules = [...(data.settings.categoryRules || [])].sort((a, b) => a.match.localeCompare(b.match));
+    const [adding, setAdding] = useState(null);
+    const del = async (r) => { await setSetting('categoryRules', (data.settings.categoryRules || []).filter((x) => !(x.match === r.match && (x.sign || 'out') === (r.sign || 'out')))); toast(`Rule for "${r.match}" removed`); };
+    const add = async (e) => {
+      e.preventDefault();
+      if (!normText(adding.match)) return toast('Type the words to match', 'error');
+      const rule = { match: adding.match, category: adding.category, sign: adding.type === 'income' ? 'in' : 'out', type: adding.type };
+      await saveCategoryRule(data.settings, rule);
+      // Fix anything still waiting for a category that this rule now covers.
+      const fix = data.transactions.filter((t) => t.category === 'Uncategorized' && t.type === rule.type && ruleHits(rule, t));
+      if (fix.length) await DB.bulkPut('transactions', fix.map((t) => ({ ...t, category: rule.category })));
+      await reload(['settings', 'transactions']);
+      setAdding(null); toast(fix.length ? `Rule saved · ${fix.length} uncategorized updated` : 'Rule saved');
+    };
+    return (
+      <div>
+        <p className="text-sm text-slate-500 mb-3">When a statement description contains these words, the transaction gets your category instead of the built-in guess. Matching ignores case, numbers and symbols, so "publix" covers "PUBLIX #1534".</p>
+        {rules.length === 0 ? <Empty icon="Tags" title="No rules yet" body="Recategorize an imported transaction and choose “Remember for future imports”." /> :
+          <div className="card divide-y divide-slate-900/[.05] dark:divide-white/[.06] rise-list">
+            {rules.map((r) => (
+              <div key={r.match + r.sign} className="flex items-center gap-3 p-3">
+                <div className="flex-1 min-w-0"><p className="font-semibold truncate">“{r.match}”</p><p className="text-xs text-slate-500">{r.sign === 'in' ? 'Money in' : 'Spending'} → <span className="font-semibold text-slate-700 dark:text-slate-200">{r.category}</span></p></div>
+                <button className="press w-9 h-9 grid place-items-center rounded-full text-rose-600 bg-rose-500/10" aria-label={`Delete rule ${r.match}`} onClick={() => del(r)}><Icon name="Trash2" size={16} /></button>
+              </div>
+            ))}
+          </div>}
+        {adding ? (
+          <form onSubmit={add} className="space-y-3 mt-4 fade-in">
+            <Segmented value={adding.type} onChange={(v) => setAdding({ ...adding, type: v, category: v === 'income' ? INCOME_CATEGORIES[0] : 'Groceries' })} options={[{ value: 'expense', label: 'Spending' }, { value: 'income', label: 'Money in' }]} />
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Description contains"><Input value={adding.match} onChange={(e) => setAdding({ ...adding, match: e.target.value })} placeholder="e.g. blue bottle" autoFocus /></Field>
+              <Field label="Category"><Select options={(adding.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).filter((c) => c !== 'Uncategorized')} value={adding.category} onChange={(e) => setAdding({ ...adding, category: e.target.value })} /></Field>
+            </div>
+            <Button type="submit" className="w-full">Save rule</Button>
+          </form>
+        ) : <Button variant="secondary" className="w-full mt-4" onClick={() => setAdding({ match: '', category: 'Groceries', type: 'expense' })}><Icon name="Plus" size={16} />Add a rule</Button>}
+      </div>
+    );
+  }
+
   function SettingsView() {
     const { data, setSetting, reload, toast, loadSample, installPrompt, install, openCards } = useApp();
+    const [rulesOpen, setRulesOpen] = useState(false);
     const st = data.settings;
     const [storage, setStorage] = useState(null);
     useEffect(() => {
@@ -2749,6 +2850,7 @@
           </Row>
           {st.notify && <Row icon="BellRing" label="Send a test reminder" onClick={async () => { const ok = await RecurringScanner.notifications.test(); toast(ok ? 'Test sent' : 'Could not show a notification', ok ? 'ok' : 'error'); }}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>}
           <Row icon="CreditCard" label="Manage credit cards" sub="Names, last 4 digits, limits and payment due dates" onClick={() => openCards({})}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
+          <Row icon="Tags" label="Category rules" sub={(st.categoryRules || []).length ? `${st.categoryRules.length} saved merchant mapping${st.categoryRules.length === 1 ? '' : 's'} used on every import` : 'Created when you recategorize an imported transaction'} onClick={() => setRulesOpen(true)}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
           <Row icon="CalendarClock" label="Remind me">
             <select className={smallSelect} value={st.reminderDays ?? 3} onChange={(e) => setSetting('reminderDays', Number(e.target.value))}>
               {[1, 2, 3, 5, 7].map((d) => <option key={d} value={d}>{d} day{d > 1 ? 's' : ''} before</option>)}
@@ -2768,6 +2870,7 @@
           <Row icon="Trash2" label="Erase all data" danger onClick={wipe} />
         </Card>
         <p className="text-center text-xs text-slate-400 mt-6">Centric Wealth · offline-first · v1.0.0</p>
+        <Sheet open={rulesOpen} title="Category rules" onClose={() => setRulesOpen(false)}><CategoryRules /></Sheet>
       </div>
     );
   }

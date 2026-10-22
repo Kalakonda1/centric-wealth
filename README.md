@@ -181,6 +181,22 @@ Credit limits come from card statements ("Credit Limit"), or you can enter them 
 - **PDF chart summary:** the PDF also gets a **Chart Summary** page, with the charts drawn on the device as images.
 
 
+## Categories: cleaning, keywords and your own rules
+
+- **Cleaning before matching:** each description is lower-cased and every digit, store number and symbol becomes a space, then spaces collapse (`StatementParser.normalizeText`). For example, `PUBLIX #1234 TAMPA FL` becomes `publix tampa fl`, `UBER *TRIP` becomes `uber trip`, and `APPLE.COM/BILL` becomes `apple com bill`. Keywords are cleaned the same way, so `at&t` matches `AT&T*BILL` and `trader joe's` matches `TRADER JOE'S #552`. Matching is on whole words, so `cab` doesn't match `CABELAS`.
+- **Built-in dictionary** (`RULES` in `statement-parser.js`; the first match wins):
+  - **Groceries:** Publix, Walmart (also `WAL-MART` and `WM SUPERCENTER`), Target, Trader Joe's, Whole Foods, ALDI, Winn-Dixie.
+  - **Transport:** Uber, Lyft, Shell, Chevron, Exxon, Wawa, other gas stations, and transit.
+  - **Subscriptions:** Apple, iTunes, iCloud, Xfinity, Comcast, Netflix, Spotify, Hulu, Amazon Prime and Google.
+  - **Dining:** Starbucks, McDonald's, Chipotle, Uber Eats, DoorDash and Grubhub.
+  - **Utilities:** electric, water and gas bills, FPL, Verizon, T-Mobile and AT&T.
+- **Rule order:** rules are checked in an order that resolves overlaps. Uber Eats is checked before Uber, gas stations before the gas bill, and Apple Store (Shopping) before Apple (Subscriptions).
+- **No match:** spending gets **Uncategorized**. The import preview says how many rows weren't matched. In Activity, a **Needs category (N)** chip lists every uncategorized transaction across all months.
+- **Recategorizing:** tap a transaction and pick a category. You can then:
+  - choose **Remember for future imports**, with the merchant words pre-filled and editable (for example `cabelas`);
+  - optionally move the other matching transactions to the same category in one go.
+- **Your rules:** rules are saved in IndexedDB (`settings` › `categoryRules`) and checked before the built-in dictionary on every import. View, add or delete them in **Settings › Category rules**. A rule added there also fixes matching Uncategorized transactions.
+
 ## Credit cards & payment due dates
 
 - **Manage credit cards** (Dashboard › Credit card due dates › Manage, Settings, or Budget & Debt › Debt): add, edit or delete cards with a name, last 4 digits, credit limit, balance, APR, minimum payment, color and a **payment due day** (tap a day 1-31 on the picker; 29-31 fall on the last day in shorter months). Change it any time. Only the last 4 digits are stored, never a full number.
