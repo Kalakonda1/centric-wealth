@@ -350,15 +350,15 @@
   </script>
 
   <!-- Monthly report builder + client-side download (see monthly-report.js) -->
-  <script src="./monthly-report.js?v=1.17.0"></script>
+  <script src="./monthly-report.js?v=1.18.0"></script>
   <!-- Recurring subscriptions/bills detection + local reminders (see recurring-scanner.js) -->
   <!-- PDF/CSV statement parsing for the Upload tab (see statement-parser.js) -->
-  <script src="./statement-parser.js?v=1.17.0"></script>
-  <script src="./recurring-scanner.js?v=1.17.0"></script>
+  <script src="./statement-parser.js?v=1.18.0"></script>
+  <script src="./recurring-scanner.js?v=1.18.0"></script>
   <!-- Financial health score, 50/30/20 and debt payoff maths (see advisor-engine.js) -->
-  <script src="./advisor-engine.js?v=1.17.0"></script>
+  <script src="./advisor-engine.js?v=1.18.0"></script>
   <!-- Analytics calculations + Chart.js configs; savings funds (see analytics-engine.js) -->
-  <script src="./analytics-engine.js?v=1.17.0"></script>
+  <script src="./analytics-engine.js?v=1.18.0"></script>
 
   <!-- =====================================================================
        React app (JSX compiled in-browser by Babel Standalone)
@@ -741,13 +741,212 @@
     );
   }
 
-  // Faint concentric rings behind the hero balance.
-  const HeroRings = () => (
-    <svg aria-hidden="true" className="absolute -right-24 -bottom-36 w-80 h-80 opacity-70 pointer-events-none" viewBox="0 0 200 200" fill="none">
-      {[30, 48, 66, 84, 98].map((r, i) => <circle key={r} cx="100" cy="100" r={r} stroke="url(#hr)" strokeWidth={i === 0 ? 1.4 : 1} opacity={1 - i * 0.16} />)}
-      <defs><linearGradient id="hr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#6ee7b7" /><stop offset="1" stopColor="#38bdf8" stopOpacity=".2" /></linearGradient></defs>
-    </svg>
-  );
+  /* ------------------------------------------------------------------ FLUID HERO
+     One continuous wave tells the story: calm blue bank money flows left to right, turns into turbulent red at the
+     point where card debt takes over (its position = bank's share), and part of it drips into a savings "well".
+     Particles run along the wave, drip into the well and rise from the turning point to the net balance.
+     Text is HTML (sharp, readable by screen readers); one canvas draws the water, ripples and particles.
+     The loop pauses off-screen / in the background, and Reduce Motion gets a single still frame. */
+  const FLUID = { waveY: 182, wellTop: 252, wellH: 100, blue: [56, 189, 248], blueDeep: [59, 130, 246], red: [251, 113, 133], redDeep: [244, 63, 94], mint: [110, 231, 183], cyan: [103, 232, 249] };
+  const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  const mixRGB = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * k));
+  const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+  function fluidLayout(w, s) {
+    const bank = Math.max(0, s.bankBalance), owed = Math.max(0, s.cardOwed), saved = Math.max(0, s.savings);
+    const both = bank > 0 && owed > 0;
+    const share = owed === 0 ? 1 : bank === 0 ? 0 : Math.min(0.78, Math.max(0.32, bank / (bank + owed)));
+    const xt = Math.round(w * share);
+    const hasWell = saved > 0;
+    const wellW = Math.max(150, Math.min(w - 32, Math.round(w * 0.56)));
+    const well = { x: 16, y: FLUID.wellTop, w: wellW, h: FLUID.wellH, fill: hasWell ? Math.min(0.55, Math.max(0.14, saved / (saved + bank || 1))) : 0 };
+    const dripX = Math.max(well.x + 36, Math.min(well.x + well.w - 34, share >= 1 ? well.x + well.w * 0.7 : xt - 26));
+    const cardsX = Math.round(Math.max(xt + 18, Math.min(w - 44, xt + (w - xt) * 0.55)));
+    return { w, H: hasWell ? FLUID.wellTop + FLUID.wellH + 18 : FLUID.waveY + 92, bank, owed, saved, both, share, xt, hasWell, well, dripX, cardsX,
+      bankX: 26, node: owed > 0 ? (bank > 0 ? xt : Math.round(w * 0.3)) : Math.round(w * 0.8) };
+  }
+
+  function FluidHero({ s }) {
+    const wrap = useRef(), canvas = useRef(), netRef = useRef();
+    const [w, setW] = useState(0);
+    useEffect(() => {
+      const el = wrap.current; if (!el) return;
+      setW(Math.round(el.getBoundingClientRect().width));
+      if (!window.ResizeObserver) return;
+      const ro = new ResizeObserver(([e]) => setW(Math.round(e.contentRect.width))); ro.observe(el); return () => ro.disconnect();
+    }, []);
+    const L = useMemo(() => fluidLayout(w || 358, s), [w, s.bankBalance, s.cardOwed, s.savings]);
+    const net = s.netBalance;
+
+    useEffect(() => {
+      const cv = canvas.current; if (!cv || !w) return;
+      const { H, xt, share, well, dripX, node, bankX, cardsX } = L, W = w, Y = FLUID.waveY;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      const g = cv.getContext('2d'); if (!g) return;
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const still = prefersReducedMotion();
+      const wr = wrap.current.getBoundingClientRect(), nr = netRef.current && netRef.current.getBoundingClientRect();
+      const target = nr ? { x: nr.left - wr.left + Math.min(nr.width, 220) * 0.55, y: nr.bottom - wr.top - 4 } : { x: 110, y: 96 };
+
+      const turb = (x) => (L.owed === 0 ? 0 : L.bank === 0 ? 1 : smooth(xt - 16, xt + 40, x));
+      const yAt = (x, t) => { const k = turb(x); return Y + (4 + 9 * k) * Math.sin(x / 19 - t * 1.7) + k * (5.5 * Math.sin(x / 7.1 + t * 3.3) + 3.4 * Math.sin(x / 3.7 - t * 5.1) + 2 * Math.sin(x / 2.3 + t * 7.3)); };
+      const colorAt = (x) => (L.owed === 0 ? FLUID.blue : L.bank === 0 ? FLUID.red : mixRGB(FLUID.blue, FLUID.red, smooth(xt - 10, xt + 30, x)));
+      const hGrad = (a) => {
+        const gr = g.createLinearGradient(0, 0, W, 0);
+        if (L.owed === 0) { gr.addColorStop(0, rgba(FLUID.blueDeep, a)); gr.addColorStop(1, rgba(FLUID.blue, a)); return gr; }
+        if (L.bank === 0) { gr.addColorStop(0, rgba(FLUID.red, a)); gr.addColorStop(1, rgba(FLUID.redDeep, a)); return gr; }
+        const p = xt / W;
+        gr.addColorStop(0, rgba(FLUID.blueDeep, a)); gr.addColorStop(Math.max(0, p - 0.04), rgba(FLUID.blue, a));
+        gr.addColorStop(Math.min(1, p + 0.08), rgba(FLUID.red, a)); gr.addColorStop(1, rgba(FLUID.redDeep, a)); return gr;
+      };
+      const rippleRGB = L.owed > 0 ? FLUID.red : FLUID.blue;
+
+      // particles
+      const flow = Array.from({ length: still ? 0 : 30 }, (_, i) => ({ x: (i / 30) * W, v: 34 + Math.random() * 30, off: (Math.random() - 0.5) * 6, r: 0.8 + Math.random() * 1.4 }));
+      const drops = [], splashes = [], rises = [], rings = [];
+      let lastDrop = 0, lastRise = 0, lastRing = -2, raf = 0, prev = 0, t = 0, running = false, visible = true;
+
+      const wellLevel = (x, tt) => well.y + well.h * (1 - well.fill) + 2.2 * Math.sin(x / 13 + tt * 1.4);
+      const roundRect = (x, y, ww, hh, r) => { g.beginPath(); g.moveTo(x + r, y); g.lineTo(x + ww - r, y); g.quadraticCurveTo(x + ww, y, x + ww, y + r); g.lineTo(x + ww, y + hh - r); g.quadraticCurveTo(x + ww, y + hh, x + ww - r, y + hh); g.lineTo(x + r, y + hh); g.quadraticCurveTo(x, y + hh, x, y + hh - r); g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y); g.closePath(); };
+
+      function frame(now) {
+        const dt = prev ? Math.min(0.05, (now - prev) / 1000) : 0.016; prev = now; t += still ? 0 : dt;
+        g.clearRect(0, 0, W, H);
+        const ny = yAt(node, t);
+
+        // wave body: colour under the crest, fading out downward (erased with a gradient before anything else is drawn)
+        g.beginPath(); g.moveTo(0, yAt(0, t));
+        for (let x = 4; x <= W; x += 4) g.lineTo(x, yAt(x, t));
+        g.lineTo(W, Y + 46); g.lineTo(0, Y + 46); g.closePath();
+        g.fillStyle = hGrad(0.2); g.fill();
+        g.globalCompositeOperation = 'destination-out';
+        const fade = g.createLinearGradient(0, Y - 6, 0, Y + 46); fade.addColorStop(0, 'rgba(0,0,0,0)'); fade.addColorStop(1, 'rgba(0,0,0,1)');
+        g.fillStyle = fade; g.fillRect(0, Y - 30, W, 80);
+        g.globalCompositeOperation = 'source-over';
+
+        // 3D concentric ripples around the turning point: lit upper rim, shaded lower rim
+        for (let i = 1; i <= 4; i++) {
+          const r = 24 * i + (still ? 0 : 3 * Math.sin(t * 1.2 - i));
+          g.lineWidth = 1;
+          g.strokeStyle = rgba([255, 255, 255], 0.085 - i * 0.015); g.beginPath(); g.ellipse(node, ny, r * 1.25, r * 0.36, 0, Math.PI, 2 * Math.PI); g.stroke();
+          g.strokeStyle = rgba(rippleRGB, 0.16 - i * 0.03); g.beginPath(); g.ellipse(node, ny + 1.5, r * 1.25, r * 0.36, 0, 0, Math.PI); g.stroke();
+        }
+        if (!still && t - lastRing > 1.7) { rings.push({ b: t }); lastRing = t; }
+        for (let i = rings.length - 1; i >= 0; i--) {
+          const p = (t - rings[i].b) / 3.4; if (p >= 1) { rings.splice(i, 1); continue; }
+          const r = 8 + p * 150, a = 0.32 * (1 - p) * (1 - p);
+          g.lineWidth = 1.4; g.strokeStyle = rgba(rippleRGB, a); g.beginPath(); g.ellipse(node, ny, r * 1.25, r * 0.36, 0, 0, 2 * Math.PI); g.stroke();
+          g.strokeStyle = rgba([255, 255, 255], a * 0.5); g.beginPath(); g.ellipse(node, ny - 1.5, r * 1.25, r * 0.36, 0, Math.PI * 1.1, Math.PI * 1.9); g.stroke();
+        }
+
+        // the savings well (a glass basin) and its liquid
+        if (L.hasWell) {
+          roundRect(well.x, well.y, well.w, well.h, 22);
+          g.fillStyle = 'rgba(255,255,255,0.035)'; g.fill();
+          g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.12)'; g.stroke();
+          g.save(); roundRect(well.x + 1, well.y + 1, well.w - 2, well.h - 2, 21); g.clip();
+          g.beginPath(); g.moveTo(well.x, well.y + well.h);
+          for (let x = well.x; x <= well.x + well.w; x += 6) g.lineTo(x, wellLevel(x, t));
+          g.lineTo(well.x + well.w, well.y + well.h); g.closePath();
+          const lg = g.createLinearGradient(0, well.y + well.h * (1 - well.fill), 0, well.y + well.h);
+          lg.addColorStop(0, rgba(FLUID.cyan, 0.55)); lg.addColorStop(1, rgba(FLUID.blueDeep, 0.22)); g.fillStyle = lg; g.fill();
+          g.lineWidth = 1.5; g.strokeStyle = rgba(FLUID.cyan, 0.8); g.beginPath();
+          for (let x = well.x; x <= well.x + well.w; x += 6) (x === well.x ? g.moveTo(x, wellLevel(x, t)) : g.lineTo(x, wellLevel(x, t)));
+          g.stroke();
+          for (let i = splashes.length - 1; i >= 0; i--) {
+            const sp = splashes[i], p = (t - sp.b) / 0.9; if (p >= 1) { splashes.splice(i, 1); continue; }
+            g.strokeStyle = rgba(FLUID.cyan, 0.7 * (1 - p)); g.lineWidth = 1; g.beginPath(); g.ellipse(sp.x, sp.y, 3 + p * 22, 1 + p * 5, 0, 0, 2 * Math.PI); g.stroke();
+          }
+          g.restore();
+          // stream guide from the wave down into the well
+          const top = yAt(dripX, t) + 6, bottom = wellLevel(dripX, t);
+          const sg = g.createLinearGradient(0, top, 0, bottom); sg.addColorStop(0, rgba(FLUID.blue, 0.22)); sg.addColorStop(1, rgba(FLUID.cyan, 0.02));
+          g.strokeStyle = sg; g.lineWidth = 6; g.lineCap = 'round'; g.beginPath(); g.moveTo(dripX, top); g.lineTo(dripX, bottom); g.stroke();
+        }
+
+        // wave glow and crest
+        const crest = new Path2D(); crest.moveTo(0, yAt(0, t)); for (let x = 4; x <= W; x += 4) crest.lineTo(x, yAt(x, t));
+        g.lineCap = 'round'; g.lineJoin = 'round';
+        g.lineWidth = 10; g.strokeStyle = hGrad(0.12); g.stroke(crest);
+        g.lineWidth = 2.4; g.strokeStyle = hGrad(1); g.stroke(crest);
+        g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.35)'; g.save(); g.translate(0, -1.2); g.stroke(crest); g.restore();
+
+        // leader lines from the labels to the curve
+        const lead = (x, fromY, c) => { const y = yAt(x, t); g.setLineDash([2, 3]); g.lineWidth = 1; g.strokeStyle = rgba(c, 0.55); g.beginPath(); g.moveTo(x, fromY); g.lineTo(x, y); g.stroke(); g.setLineDash([]);
+          g.fillStyle = rgba(c, 0.25); g.beginPath(); g.arc(x, y, 6, 0, 2 * Math.PI); g.fill(); g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, 2.4, 0, 2 * Math.PI); g.fill(); };
+        if (L.bank > 0) lead(bankX, Y - 22, FLUID.blue);
+        if (L.owed > 0) lead(cardsX, Y + 34, FLUID.red);
+
+        // the turning point
+        if (L.both) {
+          const pulse = still ? 0.5 : 0.5 + 0.5 * Math.sin(t * 3);
+          const rg = g.createRadialGradient(xt, ny, 0, xt, ny, 18 + pulse * 6);
+          rg.addColorStop(0, 'rgba(255,255,255,0.9)'); rg.addColorStop(0.25, rgba(FLUID.red, 0.55)); rg.addColorStop(1, rgba(FLUID.red, 0));
+          g.fillStyle = rg; g.beginPath(); g.arc(xt, ny, 24, 0, 2 * Math.PI); g.fill();
+        }
+
+        if (!still) {
+          // particles flowing along the wave
+          for (const p of flow) {
+            const k = turb(p.x); p.x += p.v * dt * (1 + k * 0.6); if (p.x > W + 4) { p.x = -4; p.off = (Math.random() - 0.5) * 6; }
+            const y = yAt(p.x, t) + p.off * (1 + 2.5 * k) + (k ? Math.sin(t * 9 + p.x) * k * 2 : 0);
+            g.fillStyle = rgba(colorAt(p.x), 0.85); g.beginPath(); g.arc(p.x, y, p.r, 0, 2 * Math.PI); g.fill();
+          }
+          // drips falling into the savings well
+          if (L.hasWell && t - lastDrop > 0.55) { drops.push({ x: dripX + (Math.random() - 0.5) * 3, y: yAt(dripX, t) + 4, vy: 10 }); lastDrop = t; }
+          for (let i = drops.length - 1; i >= 0; i--) {
+            const d = drops[i]; d.vy += 380 * dt; d.y += d.vy * dt;
+            const lvl = wellLevel(d.x, t);
+            if (d.y >= lvl) { splashes.push({ x: d.x, y: lvl, b: t }); drops.splice(i, 1); continue; }
+            g.fillStyle = rgba(FLUID.cyan, 0.9); g.beginPath(); g.ellipse(d.x, d.y, 1.6, 2.6, 0, 0, 2 * Math.PI); g.fill();
+          }
+          // what's left (the net) rises from the turning point to the big number
+          if (t - lastRise > 0.32) { rises.push({ b: t, j: (Math.random() - 0.5) * 30 }); lastRise = t; }
+          const rc = net < 0 ? FLUID.red : FLUID.mint;
+          for (let i = rises.length - 1; i >= 0; i--) {
+            const r = rises[i], p = (t - r.b) / 1.8; if (p >= 1) { rises.splice(i, 1); continue; }
+            const e = 1 - Math.pow(1 - p, 2), sx = node, sy = ny - 6, cx = (sx + target.x) / 2 + r.j, cy = Math.min(sy, target.y) - 4;
+            const x = (1 - e) * (1 - e) * sx + 2 * (1 - e) * e * cx + e * e * (target.x + r.j * 0.6);
+            const y = (1 - e) * (1 - e) * sy + 2 * (1 - e) * e * cy + e * e * target.y;
+            g.fillStyle = rgba(rc, 0.75 * Math.sin(Math.PI * p)); g.beginPath(); g.arc(x, y, 1.5, 0, 2 * Math.PI); g.fill();
+          }
+        }
+        if (running) raf = requestAnimationFrame(frame);
+      }
+      const start = () => { if (running || still || !visible || document.hidden) return; running = true; prev = 0; raf = requestAnimationFrame(frame); };
+      const stop = () => { running = false; cancelAnimationFrame(raf); };
+      frame(performance.now());
+      const io = window.IntersectionObserver ? new IntersectionObserver(([e]) => { visible = e.isIntersecting; visible ? start() : stop(); }) : null;
+      if (io) io.observe(cv);
+      const vis = () => (document.hidden ? stop() : start());
+      document.addEventListener('visibilitychange', vis);
+      start();
+      return () => { stop(); if (io) io.disconnect(); document.removeEventListener('visibilitychange', vis); };
+    }, [w, L, net < 0]);
+
+    const Y = FLUID.waveY;
+    return (
+      <section ref={wrap} className="hero mt-4" style={{ height: L.H }} aria-label="Combined net balance" data-testid="fluid-hero">
+        <canvas ref={canvas} className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true" />
+        <div className="relative z-[2] px-5 pt-5">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="text-[13px] font-semibold text-slate-300 inline-flex items-center gap-1.5"><i className="accent-dot w-1.5 h-1.5 rounded-full bg-emerald-300 inline-block text-emerald-300" />Combined net balance</p>
+            <p className="text-[11px] text-slate-400">bank − cards</p>
+          </div>
+          <p ref={netRef} className={cls('inline-block text-[44px] leading-[1.1] font-extrabold tracking-[-0.035em] mt-2 [text-shadow:0_2px_24px_rgba(56,189,248,.25)]', net < 0 ? 'text-rose-300' : 'text-white')}><HeroMoney value={net} /></p>
+        </div>
+        {/* labels ride the curve, sharing one baseline each: amount + name */}
+        {L.bank > 0 && <p data-testid="fluid-bank" className="absolute z-[2] flex items-baseline gap-1.5 whitespace-nowrap" style={{ left: L.bankX - 6, top: Y - 50 }}>
+          <AnimatedMoney value={s.bankBalance} className="text-[17px] font-extrabold tracking-tight text-white" /><span className="text-xs font-semibold text-sky-300">Bank</span></p>}
+        {L.owed > 0 && <p data-testid="fluid-cards" className="absolute z-[2] flex items-baseline gap-1.5 whitespace-nowrap" style={{ right: 16, top: Y + 38 }}>
+          <AnimatedMoney value={s.cardOwed} className="text-[17px] font-extrabold tracking-tight text-white" /><span className="text-xs font-semibold text-rose-300">Cards</span></p>}
+        {L.hasWell && <div data-testid="fluid-well" className="absolute z-[2] flex items-baseline gap-1.5 whitespace-nowrap" style={{ left: L.well.x + 16, top: L.well.y + 10 }}>
+          <AnimatedMoney value={s.savings} className="text-[15px] font-extrabold tracking-tight text-white" /><span className="text-[11px] font-semibold text-cyan-300 inline-flex items-center gap-1"><Icon name="PiggyBank" size={12} />Savings funds</span></div>}
+        <p className="sr-only">Bank {s.bankBalance.toFixed(2)}, credit cards owed {s.cardOwed.toFixed(2)}{s.savings > 0 ? `, plus ${s.savings.toFixed(2)} in savings funds` : ''}.</p>
+      </section>
+    );
+  }
 
   function Dashboard({ go }) {
     const { data, fmt, loadSample } = useApp();
@@ -783,30 +982,7 @@
           </Card>
         )}
 
-        <section className="hero mt-4 p-5 pb-4" aria-label="Combined net balance">
-          <HeroRings />
-          <div className="relative">
-            <div className="flex items-center justify-between">
-              <p className="text-[13px] font-semibold text-slate-300 inline-flex items-center gap-1.5"><i className="accent-dot w-1.5 h-1.5 rounded-full bg-emerald-300 inline-block text-emerald-300" />Combined net balance</p>
-              <p className="text-[11px] text-slate-400 rounded-full bg-white/[.06] ring-1 ring-inset ring-white/10 px-2 py-0.5">bank cash − card debt</p>
-            </div>
-            <p className={cls('text-[44px] leading-[1.1] font-extrabold tracking-[-0.035em] mt-2.5 [text-shadow:0_2px_24px_rgba(56,189,248,.25)]', s.netBalance < 0 ? 'text-rose-300' : 'text-white')}><HeroMoney value={s.netBalance} /></p>
-            {(s.bankBalance > 0 || s.cardOwed > 0) && (() => {
-              const bank = Math.max(0, s.bankBalance), owed = Math.max(0, s.cardOwed), tot = bank + owed || 1;
-              return <>
-                <div className="mt-4 h-2 rounded-full bg-white/10 overflow-hidden flex gap-0.5 shadow-[0_0_16px_-4px_rgba(56,189,248,.6)]">
-                  <GrowBarRaw value={bank / tot} color="linear-gradient(90deg,#38bdf8,#0ea5e9)" />
-                  <GrowBarRaw value={owed / tot} color="linear-gradient(90deg,#fb7185,#f43f5e)" />
-                </div>
-                <div className="flex justify-between text-xs text-slate-300 mt-2.5">
-                  <span className="inline-flex items-center gap-1.5"><i className="w-2 h-2 rounded-full bg-sky-400 inline-block" />Bank <AnimatedMoney value={s.bankBalance} short className="font-semibold text-white" /></span>
-                  <span className="inline-flex items-center gap-1.5"><i className="w-2 h-2 rounded-full bg-rose-400 inline-block" />Cards <AnimatedMoney value={s.cardOwed} short className="font-semibold text-white" /></span>
-                </div>
-              </>;
-            })()}
-            {s.savings > 0 && <p className="text-xs text-slate-300 mt-3 inline-flex items-center gap-1.5 rounded-full bg-sky-400/10 ring-1 ring-inset ring-sky-300/20 px-2.5 py-1"><Icon name="PiggyBank" size={13} className="text-sky-300" />Plus <AnimatedMoney value={s.savings} className="font-semibold text-white" /> set aside in savings funds</p>}
-          </div>
-        </section>
+        <FluidHero s={s} />
         <div className="grid grid-cols-2 gap-3 mt-3">
           <SummaryCard icon="Landmark" tone="sky" label="Bank Balance" amount={s.bankBalance} sub={`Liquid cash · ${s.bankAccts.length} account${s.bankAccts.length === 1 ? '' : 's'}${s.bankAccts.some((a) => a.ledger && a.balanceSource === 'estimated') ? '\nincludes estimates' : ''}`} onClick={() => go('budget', 'assets')} />
           <SummaryCard icon="CreditCard" tone="red" label="Credit Card Owed" amount={s.cardOwed} sub={`${s.cards.length} card${s.cards.length === 1 ? '' : 's'}${s.cards.some((c) => c.ledger && c.balanceSource === 'estimated') ? '\nincludes estimates' : ''}`} onClick={() => go('budget', 'debt')} />
@@ -3309,7 +3485,7 @@
   }
 
   /* ================================================================= APP */
-  const APP_VERSION = '1.17.0'; // keep in step with sw.js VERSION and the ?v= on the script tags
+  const APP_VERSION = '1.18.0'; // keep in step with sw.js VERSION and the ?v= on the script tags
   const TABS = [
     { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     { id: 'transactions', label: 'Activity', aria: 'Transactions', icon: 'ArrowLeftRight' },

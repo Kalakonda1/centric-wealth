@@ -119,3 +119,39 @@ test('analytics steps through months, quarters, half-years and years', async ({ 
   await expect(label).toHaveText(String(prev.getFullYear()));
   await expect(page.locator('[data-testid=period-totals]')).toContainText('Income');
 });
+
+test('fluid hero: one wave from bank to cards, savings in the well, every mix of balances', async ({ page }) => {
+  await page.getByRole('button', { name: 'Try sample' }).click();
+  const hero = page.locator('[data-testid=fluid-hero]');
+  const label = (k) => hero.locator(`[data-testid=fluid-${k}]`);
+  await expect(label('bank')).toContainText('Bank');
+  await expect(label('cards')).toContainText('Cards');
+  await expect(hero.locator('canvas')).toHaveCount(1);
+  // Let the sample's balance recalculation finish, so it can't overwrite the balances set below.
+  await expect(page.getByText('Sample data loaded')).toBeVisible();
+  await page.reload(); await expect(label('bank')).toBeVisible(); await page.waitForTimeout(1000);
+  // Bank only, cards only, and with a savings fund: labels follow what exists, no errors.
+  const setBalances = (bank, card, fund) => page.evaluate(async ([bank, card, fund]) => {
+    let first = true; // the whole bank amount goes into one bank account (Retirement etc. aren't bank money)
+    for (const a of await FinanceDB.getAll('accounts')) if (a.kind !== 'fund') { await FinanceDB.put('accounts', { ...a, ledger: false, balance: a.kind === 'bank' && first ? bank : 0 }); if (a.kind === 'bank') first = false; }
+    for (const d of await FinanceDB.getAll('debts')) await FinanceDB.put('debts', { ...d, ledger: false, balance: d.kind === 'credit' || d.type === 'Credit Card' ? card : 0 });
+    if (fund) await FinanceDB.put('accounts', { id: 'fund-test', name: 'Emergency Fund', kind: 'fund', type: 'Savings', fundType: 'emergency', targetMode: 'amount', target: 5000, balance: fund });
+  }, [bank, card, fund]);
+  await setBalances(5327, 0, 0); await page.reload();
+  await expect(label('bank')).toBeVisible(); await expect(label('cards')).toHaveCount(0); await expect(label('well')).toHaveCount(0);
+  await setBalances(0, 1239.55, 0); await page.reload();
+  await expect(label('cards')).toBeVisible(); await expect(label('bank')).toHaveCount(0);
+  await setBalances(5327, 1239.55, 2400); await page.reload();
+  await expect(label('bank')).toContainText('$5,327.00'); await expect(label('cards')).toContainText('$1,239.55'); await expect(label('well')).toContainText('$2,400.00');
+});
+
+test('fluid hero draws a still frame with Reduce Motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.getByRole('button', { name: 'Try sample' }).click();
+  const painted = await page.locator('[data-testid=fluid-hero] canvas').evaluate((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i]) n++;
+    return n;
+  });
+  expect(painted).toBeGreaterThan(1000);
+});
