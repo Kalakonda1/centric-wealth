@@ -1130,6 +1130,120 @@
   };
   const UPLOAD_ERRORS = { PDF_NO_TEXT: 'scanned', PDF_PASSWORD: 'password' };
 
+  /**
+   * Save one parsed statement into its account and update the account's balance anchor.
+   * balanceText: what the user typed (single import) or null to use the balance found on the statement.
+   * Accounts are re-read from IndexedDB so several statements in a row don't create duplicate accounts.
+   */
+  async function importStatement({ report, file, kind, accountName, subtype, balanceText = null }) {
+    const [accounts, debts] = await Promise.all([DB.getAll('accounts'), DB.getAll('debts')]);
+    const acct = await ensureAccount(kind, accountName, subtype, { accounts, debts });
+    const saved = await StatementParser.saveTransactions(report.transactions, { sourceName: file.name, accountType: kind, accountName });
+    // Balance anchor: the statement's ending balance (or what the user typed) as of the statement date.
+    const typed = balanceText == null ? null : String(balanceText).trim() === '' ? null : parseAmount(balanceText);
+    const bal = balanceText == null ? report.meta.endingBalance ?? null : typed;
+    const asOf = report.meta.endingBalanceDate || report.meta.statementEnd || report.meta.dateRange[1];
+    const patch = { ledger: true, kind };
+    if (kind === 'credit' && report.meta.creditLimit && !Number(acct.creditLimit)) patch.creditLimit = report.meta.creditLimit;
+    if (bal != null && !isNaN(bal) && (!acct.anchorDate || asOf >= acct.anchorDate)) {
+      Object.assign(patch, { anchorSetAt: new Date().toISOString(), anchorBalance: round2(bal), anchorDate: asOf, balanceSource: report.meta.endingBalance != null && round2(bal) === round2(report.meta.endingBalance) ? 'statement' : 'manual' });
+    } else if (!acct.ledger && Number(acct.balance)) {
+      // An account you already tracked by hand: its current balance stays the starting point.
+      Object.assign(patch, { anchorBalance: Number(acct.balance), anchorDate: todayISO(), anchorSetAt: new Date().toISOString(), balanceSource: 'manual' });
+    } else if (acct.anchorBalance == null) patch.balanceSource = 'estimated';
+    await DB.put(kind === 'bank' ? 'accounts' : 'debts', { ...acct, ...patch });
+    return { ...saved, accountName, kind, needsApr: kind === 'credit' && !(Number(acct.apr) > 0) };
+  }
+  const statementEnd = (r) => r.meta.endingBalanceDate || r.meta.statementEnd || r.meta.dateRange[1];
+  const shortRange = (r) => `${parseISO(r.meta.dateRange[0]).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${parseISO(r.meta.dateRange[1]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  let batchSeq = 0;
+
+  // Review list for several statements: status per file, account per file, then one import.
+  function BatchList({ batch, view, done, busy, updateItem, setItemKind, onRemove, onClear, onImport }) {
+    const { data, fmt, go } = useApp();
+    const finished = !!done;
+    const busyReading = view.reading;
+    return (
+      <>
+        <SectionTitle action={!busy && <button className="press text-sm font-semibold text-slate-500" onClick={onClear}>{finished ? 'Done' : 'Clear all'}</button>}>
+          {finished ? 'Import finished' : `Review ${batch.length} statement${batch.length === 1 ? '' : 's'}`}
+        </SectionTitle>
+        {finished && (
+          <Card className="p-4 mb-3 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20 fade-in">
+            <p className="font-semibold flex items-center gap-2"><Icon name="CircleCheck" size={18} className="text-emerald-600" />Imported {done.inserted} transaction{done.inserted === 1 ? '' : 's'} from {done.files} statement{done.files === 1 ? '' : 's'}</p>
+            {done.accounts.length > 0 && <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">Into {done.accounts.join(', ')}. Balances use the latest statement for each account.</p>}
+            {done.failed > 0 && <p className="text-sm text-rose-600 mt-1">{done.failed} couldn’t be imported; see below.</p>}
+            {done.needsApr.length > 0 && <p className="text-sm text-slate-600 dark:text-slate-300 mt-2">Add the APR and minimum payment for {done.needsApr.join(', ')} so payoff plans are accurate. <button className="press font-semibold text-brand-700 dark:text-brand-400" onClick={() => go('budget', 'debt')}>Open Debt</button></p>}
+          </Card>
+        )}
+        <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06] rise-list" data-testid="batch-list">
+          {batch.map((it) => {
+            const inf = view.info[it.id];
+            const existing = it.kind === 'bank' ? data.accounts.filter(isBankAccount) : data.debts.filter(isCardDebt);
+            const known = existing.some((a) => sameName(a.name, it.accountName));
+            const st = it.status;
+            const icon = st === 'done' ? 'CircleCheck' : st === 'error' ? 'CircleAlert' : st === 'password' ? 'Lock' : st === 'ready' ? 'FileCheck' : st === 'queued' ? 'Clock' : 'LoaderCircle';
+            const tone = st === 'done' ? 'text-emerald-600 bg-emerald-500/10' : st === 'error' ? 'text-rose-600 bg-rose-500/10' : st === 'password' ? 'text-amber-600 bg-amber-500/10' : st === 'ready' ? 'text-brand-700 bg-brand-500/10 dark:text-brand-400' : 'text-slate-500 bg-slate-500/10';
+            return (
+              <div key={it.id} className="p-3.5" data-file={it.file.name}>
+                <div className="flex items-start gap-3">
+                  <div className={cls('w-9 h-9 rounded-xl grid place-items-center shrink-0', tone)}><Icon name={icon} size={17} className={st === 'reading' || st === 'importing' ? 'animate-spin' : ''} /></div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm truncate">{it.file.name}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{
+                      st === 'queued' ? 'Waiting…' : st === 'reading' ? 'Reading…' : st === 'importing' ? 'Importing…'
+                      : st === 'password' ? 'This PDF is password-protected.'
+                      : st === 'error' ? <span className="text-rose-600 dark:text-rose-400">{it.error?.message || 'Couldn’t read this file.'}</span>
+                      : st === 'done' ? <span className="text-emerald-700 dark:text-emerald-400">Added {it.result.inserted} to {it.result.accountName}{it.result.skippedDuplicates ? ` · ${it.result.skippedDuplicates} already there` : ''}</span>
+                      : <>{shortRange(it.report)}{inf ? <> · <b className="text-slate-700 dark:text-slate-200">{inf.fresh} new</b>{inf.dup ? ` · ${inf.dup} already imported` : ''}{inf.unc ? ` · ${inf.unc} uncategorized` : ''}</> : ''}{it.report.meta.endingBalance != null ? ` · balance ${fmt(it.report.meta.endingBalance)}` : ''}</>
+                    }</p>
+                  </div>
+                  {!busy && st !== 'done' && <button className="press w-8 h-8 grid place-items-center rounded-full text-slate-400 hover:text-rose-600" aria-label={`Remove ${it.file.name}`} onClick={() => onRemove(it.id)}><Icon name="X" size={16} /></button>}
+                </div>
+
+                {st === 'password' && (
+                  <form className="flex gap-2 mt-2.5" onSubmit={(e) => { e.preventDefault(); updateItem(it.id, { status: 'queued' }); }}>
+                    <input className={inputCls} type="password" placeholder="PDF password" value={it.password} onChange={(e) => updateItem(it.id, { password: e.target.value })} />
+                    <Button type="submit">Open</Button>
+                  </form>
+                )}
+
+                {st !== 'done' && st !== 'importing' && !(st === 'error' && it.file.name.toLowerCase().endsWith('.json')) && (
+                  <div className="mt-2.5 ml-12">
+                    <button type="button" onClick={() => updateItem(it.id, { open: !it.open })} disabled={busy} aria-expanded={!!it.open}
+                      className={cls('press inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full', it.kind === 'bank' ? 'bg-sky-500/10 text-sky-800 dark:text-sky-300' : 'bg-violet-500/10 text-violet-800 dark:text-violet-300')}>
+                      <Icon name={it.kind === 'bank' ? 'Landmark' : 'CreditCard'} size={12} />{String(it.accountName).trim() || 'Choose an account'}{!known && String(it.accountName).trim() && <span className="font-medium opacity-70">(new)</span>}<Icon name="ChevronDown" size={12} className={cls('transition-transform duration-300', it.open && 'rotate-180')} />
+                    </button>
+                    <div className={cls('accordion', it.open && 'open')} aria-hidden={!it.open} inert={it.open ? undefined : ''}><div>
+                      <div className="pt-2.5 space-y-2">
+                        <Segmented value={it.kind} onChange={(k) => setItemKind(it, k)} options={[{ value: 'bank', label: 'Bank account' }, { value: 'credit', label: 'Credit card' }]} />
+                        <input className={inputCls} aria-label={`Account for ${it.file.name}`} placeholder={it.kind === 'bank' ? 'e.g. Chase Checking' : 'e.g. Amex Gold'} value={it.accountName} list={`acct-${it.kind}-b`}
+                          onChange={(e) => updateItem(it.id, { accountName: e.target.value, custom: true })} />
+                        {existing.length > 0 && <div className="flex flex-wrap gap-1.5">{existing.map((a) => (
+                          <button key={a.id} type="button" onClick={() => updateItem(it.id, { accountName: a.name, custom: true })} className={cls('press text-xs font-medium px-2.5 py-1 rounded-full border', sameName(a.name, it.accountName) ? 'border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-500/10' : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300')}>{a.name}</button>
+                        ))}</div>}
+                      </div>
+                    </div></div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </Card>
+        <datalist id="acct-bank-b">{data.accounts.filter(isBankAccount).map((a) => <option key={a.id} value={a.name} />)}</datalist>
+        <datalist id="acct-credit-b">{data.debts.filter(isCardDebt).map((a) => <option key={a.id} value={a.name} />)}</datalist>
+
+        {!finished && <>
+          <p className="text-xs text-slate-500 mt-3 px-1">Statements are imported oldest first, and each account’s balance comes from its latest statement. Overlapping statements don’t create duplicates.</p>
+          {view.unnamed && <p className="text-xs text-amber-700 dark:text-amber-300 mt-2 px-1">Give every statement an account before importing.</p>}
+          <Button className="w-full mt-3" disabled={busy || busyReading || view.unnamed || !view.ready} onClick={onImport}>
+            {busy ? 'Importing…' : busyReading ? 'Reading statements…' : view.totalFresh ? `Import ${view.totalFresh} transaction${view.totalFresh === 1 ? '' : 's'} from ${view.ready} statement${view.ready === 1 ? '' : 's'}` : 'Nothing new to import'}
+          </Button>
+        </>}
+      </>
+    );
+  }
+
   function UploadView() {
     const { data, toast, reload, fmt, go } = useApp();
     const [kind, setKind] = useState('bank');
@@ -1140,6 +1254,8 @@
     const [balance, setBalance] = useState('');
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState(null);
+    const [batch, setBatch] = useState(null);       // several statements: [{ id, file, kind, accountName, subtype, status, report, error, password, custom, open, result }]
+    const [batchDone, setBatchDone] = useState(null);
     const fileRef = useRef();
 
     const existing = kind === 'bank' ? data.accounts.filter(isBankAccount) : data.debts.filter(isCardDebt);
@@ -1157,6 +1273,87 @@
     };
     // Signs depend on the statement type, so re-read the file if the user switches type.
     useEffect(() => { if (job && job.report) parse(job.file, password); }, [kind]);
+
+    // ---- several statements at once
+    const customRules = data.settings.categoryRules || [];
+    const updateItem = (id, patch) => setBatch((b) => b && b.map((it) => (it.id === id ? { ...it, ...(typeof patch === 'function' ? patch(it) : patch) } : it)));
+    const handleFiles = (list) => {
+      const files = Array.from(list || []);
+      if (!files.length) return;
+      if (files.length === 1 && !batch) return handleFile(files[0]);
+      const fresh = !batch || !!batchDone; // after a finished import, start a new list
+      setJob(null); setResult(null); setBatchDone(null);
+      if (fresh) setTimeout(() => { const el = document.querySelector('[data-testid=batch-list]'); el && el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' }); }, 120);
+      setBatch((old) => {
+        const prev = fresh ? null : old;
+        const have = new Set((prev || []).map((it) => it.file.name + '|' + it.file.size));
+        const add = files.filter((f) => !have.has(f.name + '|' + f.size)).map((file) => {
+          const backup = file.name.toLowerCase().endsWith('.json');
+          return { id: ++batchSeq, file, kind, accountName, subtype, status: backup ? 'error' : 'queued', error: backup ? { message: 'This is a Centric Wealth backup. Restore it on its own, not together with statements.' } : null, password: '' };
+        });
+        return [...(prev || []), ...add];
+      });
+    };
+    // Read queued files one at a time (PDF reading is memory-hungry on phones).
+    useEffect(() => {
+      if (!batch || batch.some((it) => it.status === 'reading')) return;
+      const next = batch.find((it) => it.status === 'queued');
+      if (!next) return;
+      updateItem(next.id, { status: 'reading', error: null });
+      StatementParser.parseStatementDetailed(next.file, { persist: false, accountType: next.kind, accountName: next.accountName, password: next.password || undefined, customRules })
+        .then((report) => updateItem(next.id, (it) => (it.kind === next.kind ? { status: 'ready', report } : { status: 'queued' })))
+        .catch((e) => updateItem(next.id, { status: e.code === 'PDF_PASSWORD' ? 'password' : 'error', error: e }));
+    }, [batch]);
+    // Steps 1-2 set the account for every file you haven't changed individually.
+    useEffect(() => {
+      setBatch((b) => b && b.map((it) => (it.custom || ['done', 'importing'].includes(it.status) ? it
+        : { ...it, accountName, subtype, ...(it.kind !== kind && it.status !== 'error' ? { kind, status: 'queued', report: null } : {}) })));
+    }, [kind, accountName, subtype]);
+    const setItemKind = (it, k) => { if (it.kind !== k) updateItem(it.id, { kind: k, custom: true, accountName: k === kind ? accountName : '', status: 'queued', report: null, error: null }); };
+
+    // New vs already-imported per file, counting overlaps with DB and with earlier files in this batch.
+    const batchView = useMemo(() => {
+      if (!batch) return null;
+      const haveBy = new Map();
+      const haveFor = (name) => {
+        const k = String(name).trim().toLowerCase();
+        if (!haveBy.has(k)) { const m = new Map(); data.transactions.filter((t) => sameName(t.accountName, name)).forEach((t) => { const b = String(t.hash || '').split('#')[0]; m.set(b, (m.get(b) || 0) + 1); }); haveBy.set(k, m); }
+        return haveBy.get(k);
+      };
+      const info = {};
+      const ready = batch.filter((it) => it.status === 'ready' && it.report && String(it.accountName).trim());
+      for (const it of [...ready].sort((a, b) => statementEnd(a.report).localeCompare(statementEnd(b.report)))) {
+        const have = haveFor(it.accountName), seen = new Map(); let fresh = 0, dup = 0, unc = 0;
+        for (const t of it.report.transactions) {
+          const b = StatementParser.hashTx(t.date, Math.abs(t.amount), t.description), n = (seen.get(b) || 0) + 1; seen.set(b, n);
+          if (n <= (have.get(b) || 0)) dup++; else { fresh++; if (StatementParser.classify(t, it.kind).category === 'Uncategorized') unc++; }
+        }
+        for (const [b, n] of seen) have.set(b, Math.max(have.get(b) || 0, n));
+        info[it.id] = { fresh, dup, unc };
+      }
+      const totalFresh = Object.values(info).reduce((s, x) => s + x.fresh, 0);
+      return { info, totalFresh, ready: ready.length, reading: batch.some((it) => it.status === 'queued' || it.status === 'reading'), unnamed: batch.some((it) => it.status === 'ready' && !String(it.accountName).trim()) };
+    }, [batch, data.transactions]);
+
+    const importAll = async () => {
+      setBusy(true);
+      const todo = batch.filter((it) => it.status === 'ready' && batchView.info[it.id]).sort((a, b) => statementEnd(a.report).localeCompare(statementEnd(b.report)));
+      const done = []; let failed = 0;
+      for (const it of todo) {
+        if (!batchView.info[it.id].fresh) { updateItem(it.id, { status: 'done', result: { inserted: 0, skippedDuplicates: batchView.info[it.id].dup, accountName: it.accountName } }); continue; }
+        updateItem(it.id, { status: 'importing' });
+        try {
+          const r = await importStatement({ report: it.report, file: it.file, kind: it.kind, accountName: it.accountName.trim(), subtype: it.subtype, balanceText: null });
+          updateItem(it.id, { status: 'done', result: r }); done.push(r);
+        } catch (e) { failed++; updateItem(it.id, { status: 'error', error: e }); }
+      }
+      await reload();
+      const inserted = done.reduce((s, r) => s + r.inserted, 0);
+      const accts = [...new Set(done.map((r) => r.accountName))];
+      setBatchDone({ inserted, files: done.length, accounts: accts, failed, needsApr: [...new Set(done.filter((r) => r.needsApr).map((r) => r.accountName))] });
+      toast(`Imported ${inserted} from ${done.length} statement${done.length === 1 ? '' : 's'}`);
+      setBusy(false);
+    };
 
     const handleFile = async (file) => {
       if (!file) return;
@@ -1197,22 +1394,9 @@
       setBusy(true);
       try {
         const { report, file } = job;
-        const acct = await ensureAccount(kind, accountName, subtype, data);
-        const saved = await StatementParser.saveTransactions(report.transactions, { sourceName: file.name, accountType: kind, accountName });
-        // Balance anchor: the statement's ending balance (or what the user typed) as of the statement date.
-        const bal = balance.trim() === '' ? null : parseAmount(balance);
-        const asOf = report.meta.endingBalanceDate || report.meta.statementEnd || report.meta.dateRange[1];
-        const patch = { ledger: true, kind };
-        if (kind === 'credit' && report.meta.creditLimit && !Number(acct.creditLimit)) patch.creditLimit = report.meta.creditLimit;
-        if (bal != null && !isNaN(bal) && (!acct.anchorDate || asOf >= acct.anchorDate)) {
-          Object.assign(patch, { anchorSetAt: new Date().toISOString(), anchorBalance: round2(bal), anchorDate: asOf, balanceSource: report.meta.endingBalance != null && round2(bal) === round2(report.meta.endingBalance) ? 'statement' : 'manual' });
-        } else if (!acct.ledger && Number(acct.balance)) {
-          // An account you already tracked by hand: its current balance stays the starting point.
-          Object.assign(patch, { anchorBalance: Number(acct.balance), anchorDate: todayISO(), anchorSetAt: new Date().toISOString(), balanceSource: 'manual' });
-        } else if (acct.anchorBalance == null) patch.balanceSource = 'estimated';
-        await DB.put(kind === 'bank' ? 'accounts' : 'debts', { ...acct, ...patch });
+        const saved = await importStatement({ report, file, kind, accountName, subtype, balanceText: balance });
         await reload();
-        setResult({ ...saved, accountName, kind, needsApr: kind === 'credit' && !(Number(acct.apr) > 0) });
+        setResult(saved);
         setJob(null); setBalance('');
         toast(`Imported ${saved.inserted} into ${accountName}`);
       } catch (e) { toast(e.message, 'error'); }
@@ -1257,14 +1441,14 @@
           {kind === 'bank' && !known && <Field label="Account type"><Select options={['Checking', 'Savings']} value={subtype} onChange={(e) => setSubtype(e.target.value)} /></Field>}
         </Card>
 
-        <SectionTitle>3 · File</SectionTitle>
-        <input ref={fileRef} type="file" accept=".pdf,.csv,.tsv,.txt,.json,application/pdf,text/csv,application/json" className="hidden" onChange={(e) => { handleFile(e.target.files[0]); e.target.value = ''; }} />
+        <SectionTitle>3 · Files</SectionTitle>
+        <input ref={fileRef} type="file" multiple accept=".pdf,.csv,.tsv,.txt,.json,application/pdf,text/csv,application/json" className="hidden" onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }} />
         <button onClick={() => fileRef.current.click()} disabled={busy}
-          onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
+          onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}
           className="press w-full rounded-[24px] border-2 border-dashed border-brand-500/35 bg-white/60 dark:bg-white/[.03] p-7 text-center active:bg-brand-500/5">
           <div className="mx-auto w-12 h-12 rounded-2xl grid place-items-center bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400"><Icon name={busy ? 'Hourglass' : 'FileSpreadsheet'} size={24} /></div>
-          <p className="font-semibold mt-3">{busy ? 'Reading statement…' : job ? job.file.name : `Choose a ${kind === 'bank' ? 'bank' : 'credit card'} statement`}</p>
-          <p className="text-xs text-slate-500 mt-1">PDF · CSV · or a Centric Wealth backup (.json)</p>
+          <p className="font-semibold mt-3">{busy ? 'Reading statement…' : batch ? 'Add more statements' : job ? job.file.name : `Choose ${kind === 'bank' ? 'bank' : 'credit card'} statements`}</p>
+          <p className="text-xs text-slate-500 mt-1">One or several PDF / CSV files · or a Centric Wealth backup (.json)</p>
         </button>
 
         {err && (
@@ -1314,6 +1498,10 @@
           </>
         )}
 
+        {batch && <BatchList batch={batch} view={batchView} done={batchDone} busy={busy} updateItem={updateItem} setItemKind={setItemKind}
+          onRemove={(id) => setBatch((b) => { const n = b.filter((it) => it.id !== id); return n.length ? n : null; })}
+          onClear={() => { setBatch(null); setBatchDone(null); }} onImport={importAll} />}
+
         {result && (
           <Card className="mt-3 p-4 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20">
             <p className="font-semibold flex items-center gap-2"><Icon name="CircleCheck" size={18} className="text-emerald-600" />Imported {result.inserted} into {result.accountName}</p>
@@ -1322,12 +1510,13 @@
           </Card>
         )}
 
-        {!job && !result && (
+        {!job && !result && !batch && (
           <>
             <SectionTitle>Tips</SectionTitle>
             <Card className="p-4 text-sm text-slate-600 dark:text-slate-300 space-y-2">
               <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Download statements from your bank’s website as PDF or CSV. Scanned (photographed) PDFs can’t be read.</p>
-              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Importing the same statement again is safe: duplicates in that account are skipped.</p>
+              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Pick several files at once (for example a year of monthly statements). You can check each one and change its account before importing.</p>
+              <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Importing the same statement again is safe: duplicates in that account are skipped, including overlaps between statements.</p>
               <p className="flex gap-2"><Icon name="Check" size={16} className="text-brand-600 shrink-0 mt-0.5" />Import both your bank and card statements: the card payment shows up on each, and both are stored as transfers so spending is only counted once.</p>
             </Card>
           </>

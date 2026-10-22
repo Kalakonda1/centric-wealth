@@ -181,6 +181,15 @@ Credit limits come from card statements ("Credit Limit"), or you can enter them 
 - **PDF chart summary:** the PDF also gets a **Chart Summary** page, with the charts drawn on the device as images.
 
 
+## Uploading several statements at once
+
+- On **Upload**, pick or drop several PDF/CSV files together (for example a year of monthly statements, or a bank and a card statement).
+- **Reading:** each file is read on the device, one at a time, and listed with its date range, how many transactions are new, how many were already imported, how many are uncategorized, and the balance found on the statement.
+- **Accounts:** every file starts with the type and account from steps 1-2. Tap the account chip on a file to make it a bank account or credit card, or to send it to a different account (existing or new).
+- **Problems:** a password-protected PDF gets its own password box. Files that aren't statements show why, and you can remove them with ×.
+- **Import:** one button imports everything, oldest statement first. Each account's balance comes from its latest statement. Overlapping statements and files imported before don't create duplicates.
+- **Single files:** picking one file keeps the original single-statement preview, where you can edit the balance by hand.
+
 ## Categories: cleaning, keywords and your own rules
 
 - **Cleaning before matching:** each description is lower-cased and every digit, store number and symbol becomes a space, then spaces collapse (`StatementParser.normalizeText`). For example, `PUBLIX #1234 TAMPA FL` becomes `publix tampa fl`, `UBER *TRIP` becomes `uber trip`, and `APPLE.COM/BILL` becomes `apple com bill`. Keywords are cleaned the same way, so `at&t` matches `AT&T*BILL` and `trader joe's` matches `TRADER JOE'S #552`. Matching is on whole words, so `cab` doesn't match `CABELAS`.
