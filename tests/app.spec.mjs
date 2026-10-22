@@ -84,3 +84,38 @@ test('sheets open over the whole screen, outside any glass card', async ({ page 
   await page.keyboard.press('Escape');
   await expect(dlg).toHaveCount(0);
 });
+
+test('analytics steps through months, quarters, half-years and years', async ({ page }) => {
+  // Calendar periods, worked out the same way the app does (quarters from Jan/Apr/Jul/Oct, halves from Jan/Jul).
+  const p = await page.evaluate(() => {
+    const T = new Date(2026, 9, 22);
+    const show = (t, o) => { const x = Analytics.period(t, o, T); return [x.label, x.start, x.end, x.buckets.length]; };
+    return { m: show('month', 0), m1: show('month', -1), q: show('quarter', 0), q1: show('quarter', -1), h: show('half', 0), h1: show('half', -1), y1: show('year', -1),
+      jump: Analytics.periodOffsetFor('month', '2026-06', T), qOf: Analytics.periodOffsetFor('quarter', '2026-05', T) };
+  });
+  expect(p.m).toEqual(['October 2026', '2026-10-01', '2026-10-31', 4]);        // weeks 1-7, 8-14, 15-21, 22-31
+  expect(p.m1).toEqual(['September 2026', '2026-09-01', '2026-09-30', 4]);
+  expect(p.q).toEqual(['Q4 2026', '2026-10-01', '2026-12-31', 1]);             // only months that have started
+  expect(p.q1).toEqual(['Q3 2026', '2026-07-01', '2026-09-30', 3]);
+  expect(p.h).toEqual(['H2 2026', '2026-07-01', '2026-12-31', 4]);
+  expect(p.h1).toEqual(['H1 2026', '2026-01-01', '2026-06-30', 6]);
+  expect(p.y1).toEqual(['2025', '2025-01-01', '2025-12-31', 12]);
+  expect([p.jump, p.qOf]).toEqual([-4, -2]);
+
+  await page.getByRole('button', { name: 'Try sample' }).click();
+  await page.getByRole('button', { name: 'Analytics' }).first().click();
+  const label = page.locator('[data-testid=period-label]');
+  const now = new Date(), MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  await expect(label).toHaveText(`${MON[now.getMonth()]} ${now.getFullYear()}`);
+  await expect(page.getByRole('button', { name: 'Next month' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Previous month' }).click();
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  await expect(label).toHaveText(`${MON[prev.getMonth()]} ${prev.getFullYear()}`);
+  await page.getByRole('button', { name: 'Quarter', exact: true }).click();
+  await expect(label).toHaveText(`Q${Math.floor(prev.getMonth() / 3) + 1} ${prev.getFullYear()}`); // keeps your place
+  await page.getByRole('button', { name: 'Half-year', exact: true }).click();
+  await expect(label).toHaveText(`H${prev.getMonth() < 6 ? 1 : 2} ${prev.getFullYear()}`);
+  await page.getByRole('button', { name: 'Year', exact: true }).click();
+  await expect(label).toHaveText(String(prev.getFullYear()));
+  await expect(page.locator('[data-testid=period-totals]')).toContainText('Income');
+});

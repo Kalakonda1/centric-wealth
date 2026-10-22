@@ -350,15 +350,15 @@
   </script>
 
   <!-- Monthly report builder + client-side download (see monthly-report.js) -->
-  <script src="./monthly-report.js?v=1.16.0"></script>
+  <script src="./monthly-report.js?v=1.17.0"></script>
   <!-- Recurring subscriptions/bills detection + local reminders (see recurring-scanner.js) -->
   <!-- PDF/CSV statement parsing for the Upload tab (see statement-parser.js) -->
-  <script src="./statement-parser.js?v=1.16.0"></script>
-  <script src="./recurring-scanner.js?v=1.16.0"></script>
+  <script src="./statement-parser.js?v=1.17.0"></script>
+  <script src="./recurring-scanner.js?v=1.17.0"></script>
   <!-- Financial health score, 50/30/20 and debt payoff maths (see advisor-engine.js) -->
-  <script src="./advisor-engine.js?v=1.16.0"></script>
+  <script src="./advisor-engine.js?v=1.17.0"></script>
   <!-- Analytics calculations + Chart.js configs; savings funds (see analytics-engine.js) -->
-  <script src="./analytics-engine.js?v=1.16.0"></script>
+  <script src="./analytics-engine.js?v=1.17.0"></script>
 
   <!-- =====================================================================
        React app (JSX compiled in-browser by Babel Standalone)
@@ -2264,48 +2264,93 @@
     );
   }
 
-  const PERIODS = [{ value: '3', label: '3 months' }, { value: '6', label: '6 months' }, { value: '12', label: '12 months' }];
+  const PERIODS = [{ value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' }, { value: 'half', label: 'Half-year' }, { value: 'year', label: 'Year' }];
+  const PERIOD_NOUN = { month: 'month', quarter: 'quarter', half: 'half-year', year: 'year' };
+  const readSession = (k, d) => { try { return sessionStorage.getItem(k) || d; } catch (_) { return d; } };
+  const writeSession = (k, v) => { try { sessionStorage.setItem(k, v); } catch (_) {} };
+
+  // "+12% vs September 2026" chip. upGood: whether a rise is good news (income) or bad (spending).
+  function ChangeChip({ now, before, upGood = true }) {
+    if (!(before > 0)) return null;
+    const ch = (now - before) / before, up = ch >= 0, good = up === upGood;
+    if (Math.abs(ch) < 0.005) return <span className="text-[11px] font-semibold text-slate-500">same</span>;
+    return <span className={cls('num inline-flex items-center gap-0.5 text-[11px] font-bold', good ? 't-income' : 't-expense')}><Icon name={up ? 'ArrowUpRight' : 'ArrowDownRight'} size={12} strokeWidth={2.6} />{Math.abs(ch) >= 10 ? '10x+' : `${Math.round(Math.abs(ch) * 100)}%`}</span>;
+  }
+
+  // Month / Quarter / Half-year / Year picker with arrows to step through calendar periods.
+  function PeriodPicker({ type, setType, p, onStep, canBack }) {
+    return (
+      <div className="mt-3">
+        <Segmented value={type} onChange={setType} options={PERIODS} />
+        <div className="card mt-2.5 flex items-center gap-2 p-1.5" data-testid="period-nav">
+          <button type="button" onClick={() => onStep(-1)} disabled={!canBack} aria-label={`Previous ${PERIOD_NOUN[type]}`} className="press w-10 h-10 grid place-items-center rounded-2xl bg-slate-900/[.05] dark:bg-white/[.07] disabled:opacity-30"><Icon name="ChevronLeft" size={18} /></button>
+          <div key={p.label} className="flex-1 text-center fade-in" aria-live="polite">
+            <p className="font-extrabold tracking-tight leading-tight" data-testid="period-label">{p.label}</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">{[p.sub, p.isCurrent ? 'to date' : ''].filter(Boolean).join(' \u00b7 ') || (p.type === 'month' ? 'by week' : 'by month')}</p>
+          </div>
+          <button type="button" onClick={() => onStep(1)} disabled={p.offset >= 0} aria-label={`Next ${PERIOD_NOUN[type]}`} className="press w-10 h-10 grid place-items-center rounded-2xl bg-slate-900/[.05] dark:bg-white/[.07] disabled:opacity-30"><Icon name="ChevronRight" size={18} /></button>
+        </div>
+      </div>
+    );
+  }
   const pctTxt = (v) => (v == null || !isFinite(v) ? '-' : `${Math.round(v * 100)}%`);
 
   function AnalyticsView() {
     const { data, fmt, go } = useApp();
-    const [period, setPeriod] = useState('6');
+    const [type, setTypeRaw] = useState(() => { const v = readSession('cw.anPeriod', 'month'); return PERIOD_NOUN[v] ? v : 'month'; });
+    const [offset, setOffset] = useState(() => Math.min(0, Number(readSession('cw.anOffset', '0')) || 0));
     const [ccView, setCcView] = useState('spending');
-    const months = useMemo(() => Analytics.monthsBack(Number(period)), [period]);
-    const labels = months.map(Analytics.shortMonth);
-    const series = useMemo(() => Analytics.monthly(data, months), [data, months]);
-    const cc = useMemo(() => Analytics.creditCards(data, months), [data, months]);
-    const cat = useMemo(() => Analytics.categories(data, months), [data, months]);
-    const days = period === '3' ? 90 : period === '6' ? 182 : 365;
-    const cf = useMemo(() => Analytics.cashFlow(data, days, period === '3' ? 'day' : 'week'), [data, days, period]);
-    const ind = useMemo(() => Analytics.indicators(data, months), [data, months]);
-    const totals = { income: series.reduce((s, m) => s + m.income, 0), expense: series.reduce((s, m) => s + m.expense, 0) };
-    const sr = ind.latest ? ind.latest.savingsRate : null;
+    const p = useMemo(() => Analytics.period(type, offset), [type, offset]);
+    useEffect(() => { writeSession('cw.anPeriod', type); writeSession('cw.anOffset', String(offset)); }, [type, offset]);
+    // Switching type keeps your place: e.g. Q2 2026 -> Month shows June 2026.
+    const setType = (t) => { setTypeRaw(t); setOffset(Analytics.periodOffsetFor(t, p.months[p.months.length - 1] || p.start.slice(0, 7))); };
+    const earliest = useMemo(() => data.transactions.reduce((m, t) => (!m || t.date < m ? t.date : m), null), [data.transactions]);
+    const canBack = !!earliest && earliest < p.start;
+    const step = (d) => setOffset((o) => Math.min(0, o + d));
+    const buckets = p.buckets, labels = buckets.map((b) => b.label);
+    const unit = type === 'month' ? 'Week' : 'Month';
+    const series = useMemo(() => Analytics.monthly(data, buckets), [data, p]);
+    const cc = useMemo(() => Analytics.creditCards(data, buckets), [data, p]);
+    const cat = useMemo(() => Analytics.categories(data, buckets), [data, p]);
+    const cfStep = type === 'month' || type === 'quarter' ? 'day' : 'week';
+    const cf = useMemo(() => Analytics.cashFlowRange(data, p.start, p.end, cfStep), [data, p, cfStep]);
+    const ind = useMemo(() => Analytics.indicators(data, Analytics.monthsBack(6)), [data]);
+    const prev = useMemo(() => Analytics.previousTotals(data, p), [data, p]);
+    const totals = { income: series.reduce((s, m) => s + m.income, 0), expense: series.reduce((s, m) => s + m.expense, 0), toFunds: series.reduce((s, m) => s + m.toFunds, 0) };
+    const sr = totals.income > 0 ? (totals.income - totals.expense) / totals.income : null;
     const srLevel = sr == null ? 'warning' : sr >= 0.2 ? 'good' : sr >= 0.1 ? 'warning' : sr >= 0 ? 'serious' : 'critical';
     const srText = sr == null ? 'No income yet' : sr >= 0.2 ? 'Healthy (20%+)' : sr >= 0.1 ? 'Okay (10-20%)' : sr >= 0 ? 'Low (under 10%)' : 'Spent more than earned';
     const dti = ind.dti;
     const dtiLevel = dti == null ? 'warning' : dti <= 0.2 ? 'good' : dti <= 0.36 ? 'warning' : dti <= 0.43 ? 'serious' : 'critical';
     const dtiText = dti == null ? 'Needs income data' : dti <= 0.2 ? 'Low' : dti <= 0.36 ? 'Manageable' : dti <= 0.43 ? 'High' : 'Very high';
     const t = Analytics.theme(useThemeMode());
-    const hasAny = series.some((m) => m.hasData);
+    const hasAny = data.transactions.length > 0;
+    const hasPeriod = series.some((m) => m.hasData);
     const utilLevel = (u) => (u <= 0.3 ? 'good' : u <= 0.5 ? 'warning' : u <= 0.75 ? 'serious' : 'critical');
 
     if (!hasAny) return <Card className="mt-4"><Empty icon="ChartColumn" title="No data to chart yet" body="Import a statement or log a few entries and your charts appear here." action={<Button variant="secondary" onClick={() => go('upload')}>Import a statement</Button>} /></Card>;
 
+    const picker = <PeriodPicker type={type} setType={setType} p={p} onStep={step} canBack={canBack} />;
+    if (!hasPeriod) return <div>{picker}<Card className="mt-4"><Empty icon="CalendarX2" title={`Nothing recorded in ${p.label}`} body={canBack ? 'Step back to an earlier period, or pick a longer one.' : 'Import statements for this period to see it here.'} /></Card></div>;
+
+    const net = totals.income - totals.expense;
+    const vs = `vs ${prev.partial ? 'same point in ' : ''}${prev.label}`;
     return (
       <div>
-        <div className="mt-3"><Segmented value={period} onChange={setPeriod} options={PERIODS} /></div>
+        {picker}
+        <div key={type + offset} className="fade-in">
 
         {/* Income vs expenses */}
         <SectionTitle>Income vs. expenses</SectionTitle>
         <Card className="p-4">
-          <div className="flex gap-4 text-sm mb-2">
-            <div><p className="text-xs text-slate-500">Income</p><p className="num font-bold"><AnimatedMoney value={totals.income} short /></p></div>
-            <div><p className="text-xs text-slate-500">Expenses</p><p className="num font-bold"><AnimatedMoney value={totals.expense} short /></p></div>
-            <div><p className="text-xs text-slate-500">Net</p><p className={cls('num font-bold', totals.income - totals.expense < 0 && 'text-rose-600 dark:text-rose-400')}><AnimatedMoney value={totals.income - totals.expense} short /></p></div>
+          <div className="grid grid-cols-3 gap-2 mb-1" data-testid="period-totals">
+            <div><p className="text-xs text-slate-500">Income</p><p className="num font-bold t-income"><AnimatedMoney value={totals.income} short /></p><ChangeChip now={totals.income} before={prev.income} /></div>
+            <div><p className="text-xs text-slate-500">Expenses</p><p className="num font-bold"><AnimatedMoney value={totals.expense} short /></p><ChangeChip now={totals.expense} before={prev.expense} upGood={false} /></div>
+            <div><p className="text-xs text-slate-500">Net</p><p className={cls('num font-bold', net < 0 && 't-expense')}><AnimatedMoney value={net} short /></p></div>
           </div>
-          <ChartBox height={240} label="Monthly income versus expenses, expenses stacked by credit, bank and cash" dataKey={JSON.stringify(series)} build={(th, f) => Analytics.charts.incomeExpense(series, th, f)} />
-          <NumbersTable head={['Month', 'Income', 'Cards', 'Bank', 'Cash', 'Total out']} rows={series.map((m) => [m.label, fmt(m.income), fmt(m.credit), fmt(m.bank), fmt(m.cash), fmt(m.expense)])} />
+          {(prev.income > 0 || prev.expense > 0) && <p className="text-[11px] text-slate-400 mb-2">Changes are {vs} (income <span className="num">{fmt(prev.income, true)}</span>, spending <span className="num">{fmt(prev.expense, true)}</span>).</p>}
+          <ChartBox height={240} label={`Income versus expenses by ${unit.toLowerCase()} in ${p.label}, expenses stacked by credit, bank and cash`} dataKey={JSON.stringify(series)} build={(th, f) => Analytics.charts.incomeExpense(series, th, f)} />
+          <NumbersTable head={[unit, 'Income', 'Cards', 'Bank', 'Cash', 'Total out']} rows={[...series.map((m) => [m.long, fmt(m.income), fmt(m.credit), fmt(m.bank), fmt(m.cash), fmt(m.expense)]), ['Total', fmt(totals.income), fmt(series.reduce((s, m) => s + m.credit, 0)), fmt(series.reduce((s, m) => s + m.bank, 0)), fmt(series.reduce((s, m) => s + m.cash, 0)), fmt(totals.expense)]]} />
         </Card>
 
         {/* Credit cards */}
@@ -2315,9 +2360,9 @@
             <Segmented value={ccView} onChange={setCcView} options={[{ value: 'spending', label: 'Spending' }, { value: 'utilization', label: 'Utilization' }, { value: 'debt', label: 'Debt' }]} />
             <div className="mt-3">
               {ccView === 'spending' && <>
-                <p className="text-xs text-slate-500 mb-2">Card charges per month · {fmt(cc.totalCharges.reduce((a, b) => a + b, 0))} over {period} months</p>
-                <ChartBox height={220} label="Credit card charges per month, stacked by card" dataKey={'s' + JSON.stringify(cc.totalCharges) + cc.cards.map((c) => c.name).join()} build={(th, f) => Analytics.charts.creditSpending(cc, labels, th, f)} />
-                <NumbersTable head={['Month', ...cc.cards.slice(0, 6).map((c) => c.name), 'Total']} rows={labels.map((l, i) => [l, ...cc.cards.slice(0, 6).map((c) => fmt(c.charges[i])), fmt(cc.totalCharges[i])])} />
+                <p className="text-xs text-slate-500 mb-2">Card charges per {unit.toLowerCase()} · {fmt(cc.totalCharges.reduce((a, b) => a + b, 0))} in {p.label}</p>
+                <ChartBox height={220} label={`Credit card charges per ${unit.toLowerCase()}, stacked by card`} dataKey={'s' + JSON.stringify(cc.totalCharges) + cc.cards.map((c) => c.name).join()} build={(th, f) => Analytics.charts.creditSpending(cc, labels, th, f)} />
+                <NumbersTable head={[unit, ...cc.cards.slice(0, 6).map((c) => c.name), 'Total']} rows={buckets.map((b, i) => [b.long || b.label, ...cc.cards.slice(0, 6).map((c) => fmt(c.charges[i])), fmt(cc.totalCharges[i])])} />
               </>}
               {ccView === 'utilization' && <div className="space-y-4">
                 {cc.overallUtilization != null && <div className="flex items-baseline justify-between"><p className="text-sm text-slate-500">Overall utilization</p><p className="num text-xl font-bold">{pctTxt(cc.overallUtilization)}</p></div>}
@@ -2333,9 +2378,9 @@
                 ))}
               </div>}
               {ccView === 'debt' && <>
-                <p className="text-xs text-slate-500 mb-2">Amount owed at each month end, rebuilt from your current balance and statement history.</p>
-                <ChartBox height={220} label="Credit card debt by month" dataKey={'d' + JSON.stringify(cc.totalOwed) + cc.cards.map((c) => c.owed.join()).join('|')} build={(th, f) => Analytics.charts.debtTrajectory(cc, labels, th, f)} />
-                <NumbersTable head={['Month', ...cc.cards.slice(0, 5).map((c) => c.name), 'Total']} rows={labels.map((l, i) => [l, ...cc.cards.slice(0, 5).map((c) => (c.owed[i] == null ? '-' : fmt(c.owed[i]))), cc.totalOwed[i] == null ? '-' : fmt(cc.totalOwed[i])])} />
+                <p className="text-xs text-slate-500 mb-2">Amount owed at the end of each {unit.toLowerCase()}, rebuilt from your current balance and statement history.</p>
+                <ChartBox height={220} label={`Credit card debt by ${unit.toLowerCase()}`} dataKey={'d' + JSON.stringify(cc.totalOwed) + cc.cards.map((c) => c.owed.join()).join('|')} build={(th, f) => Analytics.charts.debtTrajectory(cc, labels, th, f)} />
+                <NumbersTable head={[unit, ...cc.cards.slice(0, 5).map((c) => c.name), 'Total']} rows={buckets.map((b, i) => [b.long || b.label, ...cc.cards.slice(0, 5).map((c) => (c.owed[i] == null ? '-' : fmt(c.owed[i]))), cc.totalOwed[i] == null ? '-' : fmt(cc.totalOwed[i])])} />
               </>}
             </div>
           </>}
@@ -2348,7 +2393,7 @@
             <div>
               <div className="relative mx-auto" style={{ width: 190 }}>
                 <ChartBox height={190} label="Spending share by category" dataKey={'c' + JSON.stringify(cat.rows)} build={(th, f) => Analytics.charts.categories(cat, th, f)} />
-                <div className="absolute inset-0 grid place-items-center pointer-events-none text-center"><div><p className="num text-base font-bold leading-tight"><AnimatedMoney value={cat.total} short /></p><p className="text-[11px] text-slate-500">last {period} months</p></div></div>
+                <div className="absolute inset-0 grid place-items-center pointer-events-none text-center"><div><p className="num text-base font-bold leading-tight"><AnimatedMoney value={cat.total} short /></p><p className="text-[11px] text-slate-500">{p.label}</p></div></div>
               </div>
               <ul className="space-y-2 text-sm mt-4">
                 {cat.rows.map((r, i) => (
@@ -2368,12 +2413,13 @@
         <SectionTitle>Financial indicators</SectionTitle>
         <div className="grid grid-cols-1 gap-3">
           <Card className="p-4">
-            <div className="flex items-baseline justify-between"><p className="font-semibold">Savings rate</p><span className="text-xs text-slate-500">{ind.latest ? ind.latest.label : ''}</span></div>
+            <div className="flex items-baseline justify-between"><p className="font-semibold">Savings rate</p><span className="text-xs text-slate-500">{p.label}</span></div>
             <SemiGauge value={sr} level={srLevel} center={sr == null ? '-' : `${Math.round(sr * 100)}%`} sub="of income saved" />
             <div className="flex justify-between items-center -mt-1"><StatusLabel level={srLevel}>{srText}</StatusLabel>
-              {ind.latest && <span className="num text-xs text-slate-500">{fmt(Math.max(0, ind.latest.net))} saved · {fmt(ind.latest.expense)} spent</span>}</div>
-            {ind.latest && ind.latest.toFunds > 0 && <p className="text-xs text-slate-500 mt-1">{fmt(ind.latest.toFunds)} of it moved into your savings funds.</p>}
-            <div className="mt-3"><ChartBox height={130} label="Savings rate by month" dataKey={'r' + JSON.stringify(series.map((m) => m.savingsRate))} build={(th) => Analytics.charts.savingsRate(series, th)} /></div>
+              <span className="num text-xs text-slate-500">{fmt(Math.max(0, net))} saved · {fmt(totals.expense)} spent</span></div>
+            {prev.savingsRate != null && <p className="text-xs text-slate-500 mt-1">{vs[0].toUpperCase() + vs.slice(1)}: <span className="num font-semibold">{Math.round(prev.savingsRate * 100)}%</span></p>}
+            {totals.toFunds > 0 && <p className="text-xs text-slate-500 mt-1">{fmt(totals.toFunds)} of it moved into your savings funds.</p>}
+            {type !== 'month' && series.length > 1 && <div className="mt-3"><ChartBox height={130} label="Savings rate by month" dataKey={'r' + JSON.stringify(series.map((m) => m.savingsRate))} build={(th) => Analytics.charts.savingsRate(series, th)} /></div>}
           </Card>
           <Card className="p-4">
             <div className="flex items-baseline justify-between"><p className="font-semibold">Debt-to-income</p><span className="num text-2xl font-extrabold tracking-tight">{pctTxt(dti)}</span></div>
@@ -2392,14 +2438,15 @@
         <Card className="p-4">
           {cf.accounts === 0 ? <p className="text-sm text-slate-500">Add a bank account or log cash to see your balance over time.</p> : <>
             <div className="flex gap-4 text-sm mb-2">
-              <div><p className="text-xs text-slate-500">Now</p><p className="num font-bold"><AnimatedMoney value={cf.end} /></p></div>
+              <div><p className="text-xs text-slate-500">{p.isCurrent ? 'Now' : 'End'}</p><p className="num font-bold"><AnimatedMoney value={cf.end} /></p></div>
               <div><p className="text-xs text-slate-500">Change</p><p className={cls('num font-bold', cf.change < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400')}>{cf.change >= 0 ? '+' : ''}{fmt(cf.change)}</p></div>
               <div><p className="text-xs text-slate-500">Lowest</p><p className="num font-bold">{fmt(cf.min)}</p></div>
             </div>
-            <ChartBox height={200} label="Combined bank and cash balance over time" dataKey={'f' + cf.points.length + cf.end + cf.start + period} build={(th, f) => Analytics.charts.cashFlow(cf, th, f)} />
-            <p className="text-[11px] text-slate-400 mt-1">{period === '3' ? 'Daily' : 'Weekly'} balance across bank accounts and the cash wallet. Hand-entered balances stay flat.</p>
+            <ChartBox height={200} label="Combined bank and cash balance over time" dataKey={'f' + cf.points.length + cf.end + cf.start + p.label} build={(th, f) => Analytics.charts.cashFlow(cf, th, f)} />
+            <p className="text-[11px] text-slate-400 mt-1">{cfStep === 'day' ? 'Daily' : 'Weekly'} balance across bank accounts and the cash wallet in {p.label}. Hand-entered balances stay flat.</p>
           </>}
         </Card>
+        </div>
       </div>
     );
   }
@@ -3262,7 +3309,7 @@
   }
 
   /* ================================================================= APP */
-  const APP_VERSION = '1.16.0'; // keep in step with sw.js VERSION and the ?v= on the script tags
+  const APP_VERSION = '1.17.0'; // keep in step with sw.js VERSION and the ?v= on the script tags
   const TABS = [
     { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     { id: 'transactions', label: 'Activity', aria: 'Transactions', icon: 'ArrowLeftRight' },

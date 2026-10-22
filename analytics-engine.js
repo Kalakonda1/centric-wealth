@@ -24,6 +24,7 @@
   const sum = (a, f) => a.reduce((s, x) => s + (Number(f ? f(x) : x) || 0), 0);
   const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MON_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const shortMonth = (key) => { const [y, m] = key.split('-').map(Number); return `${MON[m - 1]} '${String(y).slice(2)}`; };
 
   /* ----------------------------------------------------------- accounts */
@@ -42,18 +43,74 @@
     return Array.from({ length: n }, (_, i) => addMonths(cur, i - n + 1));
   }
 
+  /* ========================================================== periods */
+  // A bucket is a date range { key, label, from, to } (ISO dates, inclusive). Months are the usual bucket.
+  const monthBucket = (m) => ({ key: m, label: shortMonth(m), from: m + '-01', to: monthEnd(m) });
+  const toBuckets = (list) => list.map((b) => (typeof b === 'string' ? monthBucket(b) : b));
+  const addDays = (iso, n) => { const d = parseISO(iso); d.setDate(d.getDate() + n); return toISO(d); };
+  const PERIOD_MONTHS = { month: 1, quarter: 3, half: 6, year: 12 };
+
+  /**
+   * Calendar period of `type` ('month' | 'quarter' | 'half' | 'year'), `offset` periods from the one containing today
+   * (0 = current, -1 = previous...). Quarters start in Jan/Apr/Jul/Oct, halves in Jan/Jul.
+   * Returns { type, offset, start, end, label, sub, months, buckets, isCurrent, elapsedDays }.
+   * Buckets are weeks of the month (1-7, 8-14, 15-21, 22-end) for a month and months otherwise; buckets that
+   * start after today are left out.
+   */
+  function period(type = 'month', offset = 0, today = new Date()) {
+    const len = PERIOD_MONTHS[type] || 1;
+    const now = toISO(today), cur = now.slice(0, 7);
+    const [y0, m0] = cur.split('-').map(Number);
+    const startIdx = Math.floor((m0 - 1) / len) * len;            // first month (0-based) of the current period
+    const first = addMonths(`${y0}-${pad(startIdx + 1)}`, offset * len);
+    const all = Array.from({ length: len }, (_, i) => addMonths(first, i));
+    const start = first + '-01', end = monthEnd(all[len - 1]);
+    const [y, m] = first.split('-').map(Number);
+    const label = type === 'month' ? `${MON_LONG[m - 1]} ${y}` : type === 'quarter' ? `Q${Math.floor((m - 1) / 3) + 1} ${y}` : type === 'half' ? `H${m <= 6 ? 1 : 2} ${y}` : String(y);
+    const sub = type === 'month' || type === 'year' ? '' : `${MON[m - 1]} \u2013 ${MON[(m + len - 2) % 12]}`;
+    let buckets;
+    if (type === 'month') {
+      const last = Number(end.slice(8));
+      buckets = [[1, 7], [8, 14], [15, 21], [22, last]].map(([a, b]) => ({ key: `${first}-w${a}`, label: `${a}\u2013${b}`, long: `${MON[m - 1]} ${a}\u2013${b}`, from: `${first}-${pad(a)}`, to: `${first}-${pad(b)}` }));
+    } else buckets = all.map(monthBucket);
+    const shown = buckets.filter((b) => b.from <= now);
+    const isCurrent = start <= now && now <= end;
+    const elapsedDays = isCurrent ? Math.round((parseISO(now) - parseISO(start)) / 864e5) : null;
+    return { type, offset, start, end, label, sub, months: all.filter((k) => k <= cur), buckets: shown.length ? shown : buckets.slice(0, 1), isCurrent, elapsedDays };
+  }
+  /** Offset of the `type` period that contains month `key` (used to keep your place when switching period type). */
+  function periodOffsetFor(type, key, today = new Date()) {
+    const len = PERIOD_MONTHS[type] || 1;
+    const [cy, cm] = toISO(today).slice(0, 7).split('-').map(Number), [y, m] = key.split('-').map(Number);
+    const idx = (yy, mm) => yy * 12 + Math.floor((mm - 1) / len) * len;
+    return Math.min(0, Math.round((idx(y, m) - idx(cy, cm)) / len));
+  }
+  /**
+   * Totals for the period before `p`, for "vs last period". While `p` is still running, the previous period is cut
+   * at the same number of days in, so a half-finished month is not compared with a whole one.
+   */
+  function previousTotals(data, p, today = new Date()) {
+    const prev = period(p.type, p.offset - 1, today);
+    const to = p.isCurrent ? [addDays(prev.start, p.elapsedDays), prev.end].sort()[0] : prev.end;
+    const [tot] = monthly(data, [{ key: 'prev', label: prev.label, from: prev.start, to }]);
+    return { ...tot, label: prev.label, partial: p.isCurrent };
+  }
+
   /* ============================================== income vs expenses */
-  /** Per month: income, expenses split by where they were paid from, savings rate, money moved into funds. */
+  /**
+   * Per bucket (a month key or a { key, label, from, to } range): income, expenses split by where they were paid
+   * from, savings rate, money moved into funds.
+   */
   function monthly(data, months) {
     const txs = data.transactions || [];
-    return months.map((m) => {
-      const inMonth = txs.filter((t) => monthKey(t.date) === m);
+    return toBuckets(months).map((b) => {
+      const inMonth = txs.filter((t) => { const d = String(t.date).slice(0, 10); return d >= b.from && d <= b.to; });
       const income = sum(inMonth.filter((t) => t.type === 'income'), (t) => Math.abs(t.amount));
       const exp = { bank: 0, credit: 0, cash: 0, other: 0 };
       inMonth.filter((t) => t.type === 'expense').forEach((t) => { const k = ['bank', 'credit', 'cash'].includes(t.accountType) ? t.accountType : 'other'; exp[k] += Math.abs(t.amount); });
       const expense = exp.bank + exp.credit + exp.cash + exp.other;
       const toFunds = sum(inMonth.filter((t) => t.accountType === 'fund'), (t) => effect(t, 'fund'));
-      return { month: m, label: shortMonth(m), income: round2(income), expense: round2(expense), bank: round2(exp.bank + exp.other), credit: round2(exp.credit), cash: round2(exp.cash),
+      return { month: b.key, label: b.label, long: b.long || b.label, from: b.from, to: b.to, income: round2(income), expense: round2(expense), bank: round2(exp.bank + exp.other), credit: round2(exp.credit), cash: round2(exp.cash),
         net: round2(income - expense), savingsRate: income > 0 ? (income - expense) / income : null, toFunds: round2(toFunds), hasData: inMonth.length > 0 };
     });
   }
@@ -61,9 +118,9 @@
   /* ======================================================= categories */
   /** Spending by category over the given months; the tail beyond `top` folds into "Other". */
   function categories(data, months, top = 5) {
-    const set = new Set(months);
+    const bk = toBuckets(months), from = bk[0].from, to = bk[bk.length - 1].to;
     const by = {};
-    (data.transactions || []).filter((t) => t.type === 'expense' && set.has(monthKey(t.date))).forEach((t) => { const c = t.category || 'Other'; by[c] = (by[c] || 0) + Math.abs(t.amount); });
+    (data.transactions || []).filter((t) => { const d = String(t.date).slice(0, 10); return t.type === 'expense' && d >= from && d <= to; }).forEach((t) => { const c = t.category || 'Other'; by[c] = (by[c] || 0) + Math.abs(t.amount); });
     const rows = Object.entries(by).map(([category, total]) => ({ category, total: round2(total) })).sort((a, b) => b.total - a.total);
     const total = sum(rows, (r) => r.total);
     let shown = rows.slice(0, top);
@@ -81,23 +138,23 @@
   /* ===================================================== credit cards */
   /** Monthly charges per card, end-of-month amount owed (rebuilt from current balance), utilization. */
   function creditCards(data, months, today = new Date()) {
-    const txs = data.transactions || [];
+    const txs = data.transactions || [], bk = toBuckets(months);
     const todayISO = toISO(today);
     const cards = (data.debts || []).filter(isCard).map((c) => {
       const own = txs.filter((t) => belongs(t, c, 'credit'));
       const first = own.reduce((min, t) => (!min || t.date < min ? t.date : min), null);
-      const charges = months.map((m) => round2(sum(own.filter((t) => t.type === 'expense' && monthKey(t.date) === m), (t) => Math.abs(t.amount))));
-      const owed = months.map((m) => {
-        const end = monthEnd(m);
+      const charges = bk.map((b) => round2(sum(own.filter((t) => t.type === 'expense' && t.date >= b.from && String(t.date).slice(0, 10) <= b.to), (t) => Math.abs(t.amount))));
+      const owed = bk.map((b) => {
+        const end = b.to;
         if (end >= todayISO) return round2(c.balance);
-        if (!first || monthKey(first) > m) return null; // before this card's history starts
+        if (!first || first > end) return null; // before this card's history starts
         return round2(Number(c.balance) - sum(own.filter((t) => t.date > end), (t) => effect(t, 'credit')));
       });
       const limit = Number(c.creditLimit) || 0;
       return { id: c.id, name: c.name, apr: Number(c.apr) || 0, balance: round2(c.balance), limit, utilization: limit > 0 ? Math.max(0, Number(c.balance)) / limit : null, charges, owed };
     });
-    const totalCharges = months.map((_, i) => round2(sum(cards, (c) => c.charges[i])));
-    const totalOwed = months.map((_, i) => (cards.some((c) => c.owed[i] != null) ? round2(sum(cards, (c) => c.owed[i] || 0)) : null));
+    const totalCharges = bk.map((_, i) => round2(sum(cards, (c) => c.charges[i])));
+    const totalOwed = bk.map((_, i) => (cards.some((c) => c.owed[i] != null) ? round2(sum(cards, (c) => c.owed[i] || 0)) : null));
     const withLimit = cards.filter((c) => c.limit > 0);
     const overall = withLimit.length ? sum(withLimit, (c) => Math.max(0, c.balance)) / sum(withLimit, (c) => c.limit) : null;
     return { cards, totalCharges, totalOwed, overallUtilization: overall, missingLimits: cards.filter((c) => !c.limit).map((c) => c.name) };
@@ -110,6 +167,11 @@
    * balances stay flat. step: 'day' | 'week'.
    */
   function cashFlow(data, days = 90, step = 'day', today = new Date()) {
+    const t0 = toISO(today);
+    return cashFlowRange(data, addDays(t0, -days), t0, step, today);
+  }
+  /** Same as cashFlow, for the dates from..to (to is capped at today). Weekly points count back from `to`. */
+  function cashFlowRange(data, from, to, step = 'day', today = new Date()) {
     const accts = (data.accounts || []).filter(isBank);
     const now = sum(accts, (a) => Number(a.balance) || 0);
     const moving = [];
@@ -117,13 +179,18 @@
     moving.sort((a, b) => b.date.localeCompare(a.date));
     const points = [];
     const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    let bal = now, i = 0;
-    for (let d = 0; d <= days; d++) {
+    const last = [to, toISO(end)].sort()[0];
+    let bal = now, i = 0, k = 0;
+    for (let d = 0; ; d++) {
       const day = new Date(end); day.setDate(end.getDate() - d);
       const iso = toISO(day);
+      if (iso < from) break;
       while (i < moving.length && moving[i].date > iso) { bal -= moving[i].eff; i++; }
-      if (step === 'day' || d % 7 === 0) points.push({ date: iso, balance: round2(bal) });
+      if (iso > last) continue;
+      if (step === 'day' || k % 7 === 0) points.push({ date: iso, balance: round2(bal) });
+      k++;
     }
+    if (!points.length) points.push({ date: last, balance: round2(bal) });
     points.reverse();
     const vals = points.map((p) => p.balance);
     return { points, start: vals[0], end: vals[vals.length - 1], min: Math.min(...vals), max: Math.max(...vals), change: round2(vals[vals.length - 1] - vals[0]), accounts: accts.length };
@@ -366,7 +433,7 @@
 
   global.Analytics = {
     version: '1.0.0', CHART_URL,
-    monthsBack, shortMonth, monthEnd, monthly, categories, creditCards, cashFlow, funds, monthlyEssentials, indicators,
+    monthsBack, shortMonth, monthEnd, period, periodOffsetFor, previousTotals, monthly, categories, creditCards, cashFlow, cashFlowRange, funds, monthlyEssentials, indicators,
     loadChart, theme, charts, renderImages, effect,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
