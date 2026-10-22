@@ -243,11 +243,12 @@
     { category: 'Income', sign: 'in', keywords: ['payroll', 'direct dep', 'direct deposit', 'salary', 'paycheck', 'adp', 'gusto', 'paychex', 'irs treas', 'tax refund', 'interest paid', 'interest earned', 'dividend', 'unemployment', 'social security', 'ssa treas', 'pension'] },
     { category: 'Refunds', sign: 'in', keywords: ['refund', 'return credit', 'reversal', 'chargeback', 'cashback', 'cash back reward', 'statement credit', 'rebate', 'return'] },
     { category: 'Dining Out', keywords: ['uber eats', 'ubereats', 'doordash', 'dashpass', 'door dash', 'grubhub', 'grub hub', 'postmates', 'seamless', 'caviar', 'starbucks', 'starbuck', 'sbux', 'dunkin', 'mcdonald', 'mcdonalds', 'mcdonald s', 'burger king', 'wendy', 'wendys', 'taco bell', 'chipotle', 'subway', 'chick fil a', 'chickfila', 'popeyes', 'kfc', 'panera', 'domino', 'dominos', 'pizza', 'papa john', 'papa johns', 'five guys', 'shake shack', 'in n out', 'sonic drive', 'dairy queen', 'panda express', 'olive garden', 'applebee', 'applebees', 'chili s', 'chilis', 'ihop', 'denny', 'dennys', 'waffle house', 'cracker barrel', 'buffalo wild', 'jersey mike', 'jimmy john', 'firehouse subs', 'wingstop', 'zaxby', 'cava', 'sweetgreen', 'tim hortons', 'restaurant', 'cafe', 'coffee', 'sushi', 'grill', 'bistro', 'diner', 'kitchen', 'tavern', 'pub', 'brewery', 'bakery', 'taqueria', 'bbq'], patterns: [/^tst\s?\*/i] },
-    { category: 'Transport', keywords: ['uber', 'uber trip', 'lyft', 'taxi', 'cab', 'shell', 'shell oil', 'exxon', 'exxonmobil', 'mobil', 'chevron', 'bp', 'sunoco', 'marathon', 'speedway', 'wawa', 'sheetz', 'circle k', 'racetrac', 'race trac', 'quiktrip', 'qt', 'valero', 'citgo', 'arco', 'phillips', 'murphy usa', 'casey s', 'caseys', 'pilot', 'flying j', 'loves travel', 'gas station', 'gasoline', 'fuel', 'parking', 'parkmobile', 'toll', 'tolls', 'e zpass', 'ezpass', 'sunpass', 'fastrak', 'transit', 'metro transit', 'metrorail', 'metrobus', 'mta', 'bart', 'septa', 'marta', 'brightline', 'amtrak', 'greyhound', 'jiffy lube', 'auto repair', 'autozone', 'o reilly', 'advance auto', 'car wash', 'dmv', 'tesla supercharger', 'chargepoint'] },
+    { category: 'Transport', keywords: ['uber', 'uber trip', 'lyft', 'taxi', 'cab', 'shell', 'shell oil', 'exxon', 'exxonmobil', 'mobil', 'chevron', 'bp', 'sunoco', 'marathon', 'speedway', 'wawa', 'sheetz', 'circle k', 'racetrac', 'race trac', 'quiktrip', 'qt', 'valero', 'citgo', 'arco', 'phillips', 'murphy usa', 'casey s', 'caseys', 'pilot', 'flying j', 'loves travel', 'gas station', 'gasoline', 'fuel', 'parking', 'parkmobile', 'toll', 'tolls', 'e zpass', 'ezpass', 'sunpass', 'fastrak', 'transit', 'metro transit', 'metrorail', 'metrobus', 'mta', 'bart', 'septa', 'marta', 'brightline', 'amtrak', 'greyhound', 'jiffy lube', 'auto repair', 'autozone', 'o reilly', 'advance auto', 'car wash', 'tesla supercharger', 'chargepoint'] },
     { category: 'Utilities', keywords: ['electric', 'electricity', 'power company', 'energy', 'duke energy', 'fpl', 'fla power', 'florida power', 'teco', 'pg e', 'con ed', 'coned', 'water', 'water utility', 'sewer', 'gas', 'gas bill', 'gas company', 'natural gas', 'peoples gas', 'utility', 'utilities', 'waste management', 'trash', 'verizon', 'verizon wireless', 'vzwrlss', 'at t', 'att', 'att bill', 't mobile', 'tmobile', 'sprint', 'mint mobile', 'cricket', 'boost mobile', 'google fi', 'spectrum', 'cox comm', 'frontier', 'centurylink', 'internet', 'broadband'] },
     { category: 'Shopping', keywords: ['apple store', 'apple online store'] },
-    { category: 'Subscriptions', keywords: ['apple', 'apple com', 'apple com bill', 'itunes', 'icloud', 'apple services', 'apple music', 'apple tv', 'xfinity', 'comcast', 'netflix', 'spotify', 'hulu', 'amazon prime', 'prime video', 'amzn prime', 'google', 'google storage', 'google one', 'google play', 'youtube', 'youtube premium', 'disney plus', 'disneyplus', 'hbo max', 'max com', 'paramount', 'peacock', 'audible', 'kindle unlimited', 'siriusxm', 'sirius xm', 'pandora', 'tidal', 'dropbox', 'microsoft', 'office', 'adobe', 'canva', 'notion', 'chatgpt', 'openai', 'patreon', 'substack', 'nytimes', 'new york times', 'wsj', 'washington post', 'duolingo', 'headspace', 'calm com', 'peloton', 'planet fitness', 'la fitness', 'gym', 'xbox game pass', 'playstation plus', 'nintendo online', 'twitch', 'crunchyroll', 'masterclass', 'linkedin premium', 'nordvpn', 'expressvpn', 'surfshark', 'password', 'lastpass', 'subscription', 'membership', 'monthly plan'] },
+    { category: 'Subscriptions', keywords: ['apple', 'apple com', 'apple com bill', 'itunes', 'icloud', 'apple services', 'apple music', 'apple tv', 'xfinity', 'comcast', 'netflix', 'spotify', 'hulu', 'amazon prime', 'prime video', 'amzn prime', 'google', 'google storage', 'google one', 'google play', 'youtube', 'youtube premium', 'disney plus', 'disneyplus', 'hbo max', 'max com', 'paramount', 'peacock', 'audible', 'kindle unlimited', 'siriusxm', 'sirius xm', 'pandora', 'tidal', 'dropbox', 'microsoft', 'office', 'adobe', 'canva', 'notion', 'chatgpt', 'openai', 'anthropic', 'claude', 'claude ai', 'github', 'midjourney', 'perplexity', 'cursor', 'patreon', 'substack', 'nytimes', 'new york times', 'wsj', 'washington post', 'duolingo', 'headspace', 'calm com', 'peloton', 'planet fitness', 'la fitness', 'gym', 'xbox game pass', 'playstation plus', 'nintendo online', 'twitch', 'crunchyroll', 'masterclass', 'linkedin premium', 'nordvpn', 'expressvpn', 'surfshark', 'password', 'lastpass', 'subscription', 'membership', 'monthly plan'] },
     { category: 'Groceries', keywords: ['publix', 'walmart', 'wal mart', 'wm supercenter', 'walmart grocery', 'target', 'trader joe', 'trader joes', 'trader joe s', 'whole foods', 'wholefds', 'wfm', 'aldi', 'winn dixie', 'winndixie', 'grocery', 'groceries', 'supermarket', 'kroger', 'safeway', 'albertsons', 'lidl', 'wegmans', 'heb', 'h e b', 'food lion', 'giant eagle', 'stop shop', 'sprouts', 'meijer', 'costco', 'sams club', 'sam s club', 'bjs wholesale', 'instacart', 'fresh market', 'food less', 'ralphs', 'vons', 'smart final', 'market basket', 'save a lot', 'piggly wiggly', 'hy vee', 'harris teeter', 'tesco', 'sainsbury'] },
+    { category: 'Government & Taxes', keywords: ['uscis', 'uscis elis', 'us citizenship', 'irs', 'irs usataxpymt', 'us treasury', 'treasury', 'tax payment', 'franchise tax', 'dept of revenue', 'department of revenue', 'passport', 'state dept', 'us dept of state', 'cbp', 'global entry', 'tsa precheck', 'court', 'county clerk', 'dmv', 'flhsmv', 'vehicle registration'] },
     { category: 'Housing', keywords: ['rent', 'mortgage', 'landlord', 'property mgmt', 'property management', 'apartments', 'hoa', 'home depot', 'lowe s', 'lowes', 'menards', 'ace hardware', 'hardware'] },
     { category: 'Health', keywords: ['pharmacy', 'cvs', 'walgreens', 'rite aid', 'doctor', 'medical', 'dental', 'dentist', 'clinic', 'hospital', 'urgent care', 'optometrist', 'vision', 'labcorp', 'quest diag', 'therapy', 'physician'] },
     { category: 'Insurance', keywords: ['insurance', 'geico', 'progressive', 'state farm', 'allstate', 'liberty mutual', 'usaa', 'nationwide', 'farmers ins', 'lemonade', 'metlife', 'aflac', 'blue cross', 'aetna', 'cigna', 'humana', 'kaiser'] },
@@ -256,7 +257,7 @@
     { category: 'Cash', keywords: ['atm withdrawal', 'atm', 'cash withdrawal'] },
     { category: 'Travel', keywords: ['airline', 'airlines', 'delta air', 'united air', 'american air', 'southwest', 'jetblue', 'spirit air', 'frontier air', 'alaska air', 'expedia', 'booking com', 'airbnb', 'vrbo', 'hotel', 'marriott', 'hilton', 'hyatt', 'holiday inn', 'motel', 'hertz', 'enterprise rent', 'avis', 'budget rent'] },
     { category: 'Entertainment', keywords: ['cinema', 'theater', 'theatre', 'amc', 'regal', 'ticketmaster', 'stubhub', 'eventbrite', 'steam', 'playstation', 'xbox', 'nintendo', 'bowling', 'concert', 'museum'] },
-    { category: 'Education', keywords: ['tuition', 'university', 'college', 'school', 'coursera', 'udemy', 'chegg', 'bookstore'] },
+    { category: 'Education', keywords: ['tuition', 'university', 'college', 'school', 'coursera', 'udemy', 'chegg', 'bookstore', 'maven analytics', 'maven analyti', 'datacamp', 'linkedin learning', 'skillshare', 'pluralsight', 'codecademy', 'edx', 'khan academy', 'brilliant'] },
     { category: 'Shopping', keywords: ['amazon', 'amzn', 'amazon mktplace', 'amzn mktp', 'best buy', 'ebay', 'etsy', 'macy', 'macys', 'kohl', 'kohls', 'nordstrom', 'tj maxx', 'tjmaxx', 'marshalls', 'ross stores', 'old navy', 'gap', 'h m', 'zara', 'ikea', 'wayfair', 'dollar tree', 'dollar general', 'family dollar', 'five below', 'shein', 'temu', 'nike', 'sephora', 'ulta'] },
   ];
 
@@ -287,17 +288,23 @@
    * (money in with no match is 'Income').
    * customRules: see matchCustomRule - checked before the built-in dictionary.
    */
+  const BNPL_PREFIX = /^\s*(?:klarna|afterpay|affirm|zip\.co|zip|sezzle)\s*\*\s*/i;
   function categorize(description, amount, customRules = []) {
     const custom = matchCustomRule(description, amount, customRules);
     if (custom) return custom.category;
     const raw = String(description || '');
     const desc = cleanDescription(raw);
-    const norm = normalizeText(desc); // keeps words like "card" so "credit card payment" still reads as a transfer
+    let norm = normalizeText(desc); // keeps words like "card" so "credit card payment" still reads as a transfer
     const dir = amount > 0 ? 'in' : 'out';
+    // Buy-now-pay-later purchase ("KLARNA* MAVEN ANALYTI"): the merchant after the prefix decides the category.
+    const bnpl = dir === 'out' && BNPL_PREFIX.test(desc);
+    if (bnpl) norm = normalizeText(desc.replace(BNPL_PREFIX, '')) || norm;
     for (const r of COMPILED) {
       if (r.sign && r.sign !== dir) continue;
+      if (bnpl && r.category === 'Debt Payment') continue;
       if ((r.re && r.re.test(norm)) || (r.patterns && r.patterns.some((p) => p.test(raw) || p.test(desc)))) return r.category;
     }
+    if (bnpl) return 'Shopping';
     return dir === 'in' ? 'Income' : 'Uncategorized';
   }
 
@@ -539,6 +546,9 @@
   const OUT_SECTION = /^(?:(?:electronic\s+|atm\s+(?:and|&)\s+debit\s+card\s+|other\s+)?withdrawals?|(?:other\s+)?debits|checks(?:\s+paid)?|(?:card\s+)?purchases(?:\s+(?:and|&)\s+(?:adjustments|other\s+charges))?|fees(?:\s+charged)?|interest\s+charged|charges|money\s+out|outgoing|(?:atm|debit\s+card)\s+(?:withdrawals|transactions))\b/i;
   const CARD_PAYMENT_HINT = /payment|pymt|directpay|autopay|thank\s*you|credit\s+adj|statement\s+credit/i;
   const INCOME_HINT = /payroll|direct\s*dep|deposit|salary|refund|interest\s+(?:paid|earned)|dividend|transfer\s+from|zelle\s+from|from\s+(?:chk|sav)|reversal|cashback|credit\s+memo/i;
+  // Card statements that print every amount unsigned list charges under headings like these.
+  const CC_OUT_SECTION = /^(?:transactions|purchases?(?:\s*(?:,|and|&)\s*(?:other\s+)?(?:debits|charges|adjustments))?|new\s+charges|charges(?:\s+(?:and|&)\s+(?:other\s+)?debits)?|purchases\s+and\s+cash\s+advances|cash\s+advances|fees\s+charged|interest\s+charged|transactions?\s+(?:detail|details))\b/i;
+  const NEUTRAL_SECTION = /^(?:transactions?|account\s+activity|transaction\s+(?:detail|details|history))$/i;
   const CC_CREDIT_HINT = /payment\s*(?:-|\u2013)?\s*thank|autopay|online\s+payment|payment\s+received|refund|return|credit\s+adj|statement\s+credit|reversal/i;
 
   function detectStatementType(text) {
@@ -547,6 +557,7 @@
     return credit > bank ? 'credit' : 'bank';
   }
 
+  const daysBetweenISO = (a, b) => Math.round((parseISO(b) - parseISO(a)) / 86400000);
   function findStatementEnd(text, order) {
     const D = `(\\d{1,2}[-/.]\\d{1,2}[-/.]\\d{2,4}|\\d{4}-\\d{2}-\\d{2}|${MON}\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}\\s+${MON}\\s+\\d{4})`;
     const patterns = [
@@ -584,7 +595,8 @@
         if (trimmed.length < 70) {
           const plain = trimmed.replace(/\s{2,}.*$/, '');
           if (IN_SECTION.test(plain)) section = 'in';
-          else if (OUT_SECTION.test(plain)) section = 'out';
+          else if (OUT_SECTION.test(plain) || (type === 'credit' && CC_OUT_SECTION.test(plain))) section = 'out';
+          else if (NEUTRAL_SECTION.test(plain)) section = null;
         }
         if (OPENING_BAL.test(trimmed)) { const m = trimmed.match(TRAILING_MONEY); if (m) prevBalance = parseMoney(m[1])?.value ?? prevBalance; }
         continue;
@@ -651,7 +663,44 @@
     // Card statements usually print the credit limit; used for utilization.
     let creditLimit = null;
     if (type === 'credit') { const lm = text.match(new RegExp('\\bcredit\\s+(?:limit|line)\\b[^\\n\\d$]{0,30}(' + MONEY_SRC + ')', 'i')); if (lm) { const v = parseMoney(lm[1]); if (v && v.value > 0) creditLimit = v.value; } }
-    return { rows: out, meta: { statementType: type, dateOrder: order, statementEnd: toISO(ref), creditLimit, endingBalance, endingBalanceDate: endingBalance != null ? toISO(ref) : null, datedLines: dateSamples.length, looksLikeStatement: /balance|statement|account|payment|deposit|withdrawal|purchase/i.test(text) } };
+    const card = type === 'credit' ? cardSummary(text, order, ref) : {};
+    // Interest and fees are often printed only as a period total (no dated line). Add them so the balance adds up.
+    if (type === 'credit') {
+      const end = toISO(ref);
+      if (card.interestCharged > 0 && !out.some((r) => r.amount < 0 && /interest|finance\s+charge/i.test(r.rawDescription))) out.push({ date: end, rawDescription: 'INTEREST CHARGE ON PURCHASES', amount: -card.interestCharged, synthetic: true });
+      if (card.feesCharged > 0 && !out.some((r) => r.amount < 0 && /\bfee\b/i.test(r.rawDescription))) out.push({ date: end, rawDescription: 'FEES CHARGED', amount: -card.feesCharged, synthetic: true });
+      // Check: previous balance + charges - payments/credits should equal the new balance.
+      if (card.previousBalance != null && endingBalance != null) {
+        const charges = round2(out.filter((r) => r.amount < 0).reduce((a, r) => a - r.amount, 0));
+        const credits = round2(out.filter((r) => r.amount > 0).reduce((a, r) => a + r.amount, 0));
+        const expected = round2(card.previousBalance + charges - credits);
+        card.reconciliation = { previousBalance: card.previousBalance, charges, credits, expected, newBalance: endingBalance, ok: Math.abs(expected - endingBalance) < 0.015 };
+        if (!card.reconciliation.ok) warn('BALANCE_MISMATCH', `Transactions add up to ${expected.toFixed(2)} but the statement's new balance is ${endingBalance.toFixed(2)}. Some lines may be missing or have the wrong sign.`);
+      }
+    }
+    return { rows: out, meta: { statementType: type, dateOrder: order, statementEnd: toISO(ref), creditLimit, endingBalance, endingBalanceDate: endingBalance != null ? toISO(ref) : null, ...card, datedLines: dateSamples.length, looksLikeStatement: /balance|statement|account|payment|deposit|withdrawal|purchase/i.test(text) } };
+  }
+
+  /** Card statement summary: previous balance, minimum due, due date, APR, last 4 digits, interest/fees for the period. */
+  function cardSummary(text, order, ref) {
+    const M = `(${MONEY_SRC})`;
+    const money = (re) => { const m = text.match(re); if (!m) return null; const v = parseMoney(m[1]); return v ? ((v.explicitSign < 0 || v.cr) ? -v.value : v.value) : null; };
+    const out = {};
+    out.previousBalance = money(new RegExp(`\\bprevious\\s+(?:statement\\s+)?balance[^\\n\\d$(\\-]{0,8}${M}`, 'i'));
+    out.minimumPayment = money(new RegExp(`\\b(?:total\\s+)?minimum\\s+(?:payment|amount)\\s+due[^\\n\\d$(\\-]{0,8}${M}`, 'i'));
+    out.interestCharged = money(new RegExp(`(?:^|[^a-z])(?:interest\\s+charged?|interest\\s+charge\\s+on\\s+purchases|total\\s+interest\\s+for\\s+this\\s+period)[^\\n\\d$(\\-]{0,8}${M}`, 'im'));
+    out.feesCharged = money(new RegExp(`(?:^|[^a-z])(?:fees\\s+charged|total\\s+fees\\s+for\\s+this\\s+period)[^\\n\\d$(\\-]{0,8}${M}`, 'im'));
+    const dm = text.match(/payment\s+due\s+date[\s\S]{0,200}?(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4})/i);
+    if (dm) {
+      const iso = parseDateToken(dm[1], { order, ref });
+      const gap = iso ? daysBetweenISO(toISO(ref), iso) : null;
+      if (iso && gap >= 5 && gap <= 45) out.paymentDueDate = iso; // must fall after the closing date
+    }
+    const am = text.match(/\bpurchases?\b[^\n%]{0,80}?(\d{1,2}(?:\.\d{1,3})?)\s*%/i) || text.match(/annual\s+percentage\s+rate[^\n%]{0,60}?(\d{1,2}(?:\.\d{1,3})?)\s*%/i);
+    if (am) { const v = parseFloat(am[1]); if (v > 0 && v < 80) out.apr = v; }
+    const lm = text.match(/(?:ending\s+in|account\s+(?:number\s+)?ending|card\s+ending|last\s+4\s+digits)[^0-9\n]{0,12}(\d{4})\b/i) || text.match(/(?:x{4,}|\*{4,}|[\u2022]{3,})\s?(\d{4})\b/i);
+    if (lm) out.last4 = lm[1];
+    return out;
   }
 
   /* ======================================================================
@@ -876,7 +925,7 @@
 
   // Parser categories -> the app's category list.
   const APP_CATEGORY = {
-    'Dining Out': 'Dining', 'Fees & Interest': 'Other', 'Cash': 'Other', 'Transfers': 'Other', 'Refunds': 'Refund',
+    'Dining Out': 'Dining', 'Cash': 'Other', 'Transfers': 'Other', 'Refunds': 'Refund',
   };
   const toAppCategory = (cat, amount, desc) => {
     if (amount > 0) {
@@ -1102,6 +1151,7 @@
     classify,
     saveTransactions,
     getStoredTransactions,
+    _extractPdfLines: (file, o) => extractPdfLines(file, o || {}), // for debugging layouts
     RULES,
     /** Replace or extend the built-in rule dictionary at runtime. */
     setRules(rules) { RULES.length = 0; RULES.push(...rules); COMPILED = RULES.map((r) => ({ ...r, re: r.keywords ? kwRe(r.keywords) : null })); },

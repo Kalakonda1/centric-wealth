@@ -342,7 +342,7 @@
     const n = parseFloat(s); return isNaN(n) ? NaN : neg ? -n : n;
   };
 
-  const EXPENSE_CATEGORIES = ['Housing', 'Utilities', 'Groceries', 'Dining', 'Transport', 'Health', 'Insurance', 'Shopping', 'Entertainment', 'Subscriptions', 'Debt Payment', 'Education', 'Travel', 'Gifts', 'Personal Payments', 'Other', 'Uncategorized'];
+  const EXPENSE_CATEGORIES = ['Housing', 'Utilities', 'Groceries', 'Dining', 'Transport', 'Health', 'Insurance', 'Shopping', 'Entertainment', 'Subscriptions', 'Debt Payment', 'Education', 'Government & Taxes', 'Fees & Interest', 'Travel', 'Gifts', 'Personal Payments', 'Other', 'Uncategorized'];
   const INCOME_CATEGORIES = ['Salary', 'Freelance', 'Interest', 'Refund', 'Gift', 'Payment Received', 'Other Income'];
   const DEBT_TYPES = ['Credit Card', 'Student Loan', 'Auto Loan', 'Mortgage', 'Personal Loan', 'Medical', 'Other'];
   const ACCOUNT_TYPES = ['Checking', 'Savings', 'Cash', 'Investment', 'Retirement', 'Property', 'Other'];
@@ -1145,6 +1145,15 @@
     const asOf = report.meta.endingBalanceDate || report.meta.statementEnd || report.meta.dateRange[1];
     const patch = { ledger: true, kind };
     if (kind === 'credit' && report.meta.creditLimit && !Number(acct.creditLimit)) patch.creditLimit = report.meta.creditLimit;
+    if (kind === 'credit') {
+      // Card details printed on the statement: fill gaps, and keep minimum/APR/limit current from the newest statement.
+      const m = report.meta, newest = !acct.anchorDate || asOf >= acct.anchorDate;
+      if (m.last4 && !acct.last4) patch.last4 = m.last4;
+      if (m.apr && (newest || !(Number(acct.apr) > 0))) patch.apr = m.apr;
+      if (m.minimumPayment != null && (newest || !Number(acct.minPayment))) patch.minPayment = m.minimumPayment;
+      if (m.creditLimit && newest) patch.creditLimit = m.creditLimit;
+      if (m.paymentDueDate && !acct.dueDay) { patch.dueDay = parseISO(m.paymentDueDate).getDate(); patch.dueSince = asOf; }
+    }
     if (bal != null && !isNaN(bal) && (!acct.anchorDate || asOf >= acct.anchorDate)) {
       Object.assign(patch, { anchorSetAt: new Date().toISOString(), anchorBalance: round2(bal), anchorDate: asOf, balanceSource: report.meta.endingBalance != null && round2(bal) === round2(report.meta.endingBalance) ? 'statement' : 'manual' });
     } else if (!acct.ledger && Number(acct.balance)) {
@@ -1152,11 +1161,28 @@
       Object.assign(patch, { anchorBalance: Number(acct.balance), anchorDate: todayISO(), anchorSetAt: new Date().toISOString(), balanceSource: 'manual' });
     } else if (acct.anchorBalance == null) patch.balanceSource = 'estimated';
     await DB.put(kind === 'bank' ? 'accounts' : 'debts', { ...acct, ...patch });
-    return { ...saved, accountName, kind, needsApr: kind === 'credit' && !(Number(acct.apr) > 0) };
+    return { ...saved, accountName, kind, needsApr: kind === 'credit' && !(Number(patch.apr ?? acct.apr) > 0), cardDetails: kind === 'credit' ? ['last4', 'apr', 'minPayment', 'dueDay'].filter((k) => patch[k] != null) : [] };
   }
   const statementEnd = (r) => r.meta.endingBalanceDate || r.meta.statementEnd || r.meta.dateRange[1];
   const shortRange = (r) => `${parseISO(r.meta.dateRange[0]).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${parseISO(r.meta.dateRange[1]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
   let batchSeq = 0;
+
+  // Card statement: does it add up, and which card details were found (saved to the card on import).
+  function StatementCheck({ meta: m, compact }) {
+    const { fmt } = useApp();
+    const r = m.reconciliation;
+    const found = [m.last4 && `ending ${m.last4}`, m.paymentDueDate && `due ${prettyDate(m.paymentDueDate)}`, m.minimumPayment != null && `minimum ${fmt(m.minimumPayment)}`, m.apr && `APR ${m.apr}%`, m.creditLimit && `limit ${fmt(m.creditLimit, true)}`].filter(Boolean);
+    if (compact) return r ? (r.ok ? <span className="text-emerald-700 dark:text-emerald-400"> · adds up ✓</span> : <span className="text-amber-700 dark:text-amber-300"> · doesn’t add up</span>) : null;
+    return (
+      <div className="mt-3 space-y-1.5 text-xs" data-testid="statement-check">
+        {r && (r.ok
+          ? <p className="flex gap-1.5 text-emerald-800 dark:text-emerald-300"><Icon name="CircleCheck" size={14} className="shrink-0 mt-px" /><span className="num">Adds up: previous {fmt(r.previousBalance)} + charges {fmt(r.charges)} − payments & credits {fmt(r.credits)} = new balance {fmt(r.newBalance)}</span></p>
+          : <p className="flex gap-1.5 text-amber-800 dark:text-amber-300"><Icon name="TriangleAlert" size={14} className="shrink-0 mt-px" /><span className="num">Doesn’t add up: transactions give {fmt(r.expected)} but the statement says {fmt(r.newBalance)}. The balance will use the statement’s figure.</span></p>)}
+        {m.interestCharged > 0 && <p className="flex gap-1.5 text-slate-600 dark:text-slate-300"><Icon name="Percent" size={14} className="shrink-0 mt-px" />Interest of {fmt(m.interestCharged)} for this period is added as a charge.</p>}
+        {found.length > 0 && <p className="flex gap-1.5 text-slate-600 dark:text-slate-300"><Icon name="CreditCard" size={14} className="shrink-0 mt-px" /><span>Card details found: {found.join(' · ')}. Missing details are saved to the card; the due date can be changed any time.</span></p>}
+      </div>
+    );
+  }
 
   // Review list for several statements: status per file, account per file, then one import.
   function BatchList({ batch, view, done, busy, updateItem, setItemKind, onRemove, onClear, onImport }) {
@@ -1195,7 +1221,7 @@
                       : st === 'password' ? 'This PDF is password-protected.'
                       : st === 'error' ? <span className="text-rose-600 dark:text-rose-400">{it.error?.message || 'Couldn’t read this file.'}</span>
                       : st === 'done' ? <span className="text-emerald-700 dark:text-emerald-400">Added {it.result.inserted} to {it.result.accountName}{it.result.skippedDuplicates ? ` · ${it.result.skippedDuplicates} already there` : ''}</span>
-                      : <>{shortRange(it.report)}{inf ? <> · <b className="text-slate-700 dark:text-slate-200">{inf.fresh} new</b>{inf.dup ? ` · ${inf.dup} already imported` : ''}{inf.unc ? ` · ${inf.unc} uncategorized` : ''}</> : ''}{it.report.meta.endingBalance != null ? ` · balance ${fmt(it.report.meta.endingBalance)}` : ''}</>
+                      : <>{shortRange(it.report)}{inf ? <> · <b className="text-slate-700 dark:text-slate-200">{inf.fresh} new</b>{inf.dup ? ` · ${inf.dup} already imported` : ''}{inf.unc ? ` · ${inf.unc} uncategorized` : ''}</> : ''}{it.report.meta.endingBalance != null ? ` · balance ${fmt(it.report.meta.endingBalance)}` : ''}{it.kind === 'credit' && <StatementCheck meta={it.report.meta} compact />}</>
                     }</p>
                   </div>
                   {!busy && st !== 'done' && <button className="press w-8 h-8 grid place-items-center rounded-full text-slate-400 hover:text-rose-600" aria-label={`Remove ${it.file.name}`} onClick={() => onRemove(it.id)}><Icon name="X" size={16} /></button>}
@@ -1479,6 +1505,7 @@
                   <Input inputMode="decimal" placeholder="0.00" value={balance} onChange={(e) => setBalance(e.target.value)} />
                 </Field>
               </div>
+              {kind === 'credit' && <StatementCheck meta={job.report.meta} />}
               {(() => { const n = preview.fresh.filter((r) => r.category === 'Uncategorized').length, mine = preview.fresh.filter((r) => r.userCategory).length; return (n > 0 || mine > 0) && <p className="text-xs mt-3 flex gap-1.5 text-slate-600 dark:text-slate-300"><Icon name="Tags" size={14} className="shrink-0 mt-px text-brand-600" /><span>{mine > 0 && `${mine} sorted by your saved category rules. `}{n > 0 && `${n} couldn't be matched and will be Uncategorized. Tap one after importing to pick a category; it's remembered for next time.`}</span></p>; })()}
               <p className="text-xs text-slate-500 mt-3">{preview.fresh.length} new · {preview.rows.length - preview.fresh.length} already imported{job.report.warnings.length ? ` · ${job.report.warnings.length} row${job.report.warnings.length === 1 ? '' : 's'} skipped` : ''} · {parseISO(job.report.meta.dateRange[0]).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – {parseISO(job.report.meta.dateRange[1]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</p>
             </Card>

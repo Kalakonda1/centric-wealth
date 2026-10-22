@@ -26,7 +26,7 @@
   // Fixed = the same (or nearly) every month and hard to change quickly.
   const FIXED = new Set(['Housing', 'Utilities', 'Insurance', 'Debt Payment', 'Subscriptions', 'Education']);
   // 50/30/20: needs are essentials incl. minimum debt payments; wants are discretionary.
-  const NEEDS = new Set(['Housing', 'Utilities', 'Groceries', 'Transport', 'Health', 'Insurance', 'Debt Payment', 'Education']);
+  const NEEDS = new Set(['Housing', 'Utilities', 'Groceries', 'Transport', 'Health', 'Insurance', 'Debt Payment', 'Education', 'Government & Taxes']);
   const WANTS = new Set(['Dining', 'Dining Out', 'Shopping', 'Entertainment', 'Subscriptions', 'Travel', 'Gifts', 'Other', 'Cash', 'Uncategorized', 'Fees & Interest']);
   const LIQUID = new Set(['Checking', 'Savings', 'Cash']);
   const HIGH_APR = 15; // % - typical credit-card territory

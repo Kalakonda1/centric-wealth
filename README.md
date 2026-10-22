@@ -181,6 +181,14 @@ Credit limits come from card statements ("Credit Limit"), or you can enter them 
 - **PDF chart summary:** the PDF also gets a **Chart Summary** page, with the charts drawn on the device as images.
 
 
+## Card statements that print every amount without a sign
+
+Some issuers (for example Zolve) print every amount as a positive number. They put payments under **Payments & Other Credits** and purchases under **Transactions**. The parser reads these section headings to decide the sign. It also:
+- **Adds interest and fees** that appear only as period totals ("Interest Charged $31.76") as one charge on the closing date, unless a dated line already covers them.
+- **Checks the arithmetic:** previous balance + charges − payments/credits must equal the new balance. The preview shows "Adds up ✓", or a warning when it doesn't.
+- **Reads card details** (last 4 digits, payment due date, minimum due, purchase APR, credit limit) and saves any that are missing to the card. The newest statement keeps the minimum, APR and limit current.
+- **New categories:** **Government & Taxes** (USCIS, IRS, passport, DMV…) and **Fees & Interest**. Buy-now-pay-later charges ("KLARNA* MERCHANT") are categorized by the merchant after the prefix.
+
 ## Uploading several statements at once
 
 - On **Upload**, pick or drop several PDF/CSV files together (for example a year of monthly statements, or a bank and a card statement).
