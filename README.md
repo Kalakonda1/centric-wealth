@@ -30,7 +30,7 @@ All paths are relative, so it works from a repo sub-path.
 Bump `VERSION` in `sw.js` on every deploy so returning visitors get the new files.
 
 
-**After every deploy**, bump three things together: `VERSION` in `sw.js`, `APP_VERSION` in `index.html`, and the `?v=` on the `<script>` tags. Open copies then pick up the new files automatically: the service worker fetches the app's own files from the network first and reloads the page once when the new version takes over. Settings shows the running version at the bottom ("Centric Wealth v1.19.0 · statement reader v1.4.0"). Offline, the saved copies are used.
+**After every deploy**, bump three things together: `VERSION` in `sw.js`, `APP_VERSION` in `index.html`, and the `?v=` on the `<script>` tags. Open copies then pick up the new files automatically: the service worker fetches the app's own files from the network first and reloads the page once when the new version takes over. Settings shows the running version at the bottom ("Centric Wealth v1.20.0 · statement reader v1.4.0"). Offline, the saved copies are used.
 ## Using FinanceDB elsewhere
 ```js
 await FinanceDB.put('transactions', { type: 'expense', amount: 12.5, category: 'Dining', date: '2026-10-21', description: 'Lunch' });
@@ -168,10 +168,13 @@ The **Quick Log** button floats on the Dashboard and Activity screens. Use it fo
 - In Activity, the **Cash & transfer log only** filter shows just these entries.
 
 ## Analytics dashboard (`analytics-engine.js`, Chart.js 4.5.1)
-On the **Dashboard**, switch **Overview / Analytics**, then pick **Month**, **Quarter**, **Half-year** or **Year** and use the ‹ › arrows to step through calendar periods (for example *October 2026*, *Q3 2026* = Jul–Sep, *H1 2026* = Jan–Jun, *2025*).
+On the **Dashboard**, switch **Overview / Analytics**. The timeline bar above the charts has presets: **Month**, **Quarter** (Q1–Q4), **Half-year** (H1/H2), **Year**, **All time** and **Custom** (any start and end date).
 
-- **Breakdown:** a month is charted week by week (1–7, 8–14, 15–21, 22–end); quarters, half-years and years month by month. A period that is still running shows only the weeks or months that have started, marked "to date".
-- **Compared with the period before:** income and spending show the change from the previous period (green when it's good news, red when it isn't). While a period is still running it's compared with the same point in the previous one, so the first half of October is measured against the first half of September, not all of it.
+- **Jump straight to any period:** for Month / Quarter / Half-year / Year, pick the **Year** (it lists every year from your oldest saved transaction up to this year) and the month, quarter or half from the second dropdown, or step with the ‹ › arrows. Periods that haven't started yet, and ones before your first transaction, are greyed out, so you never land on an empty chart.
+- **All time** covers everything from your first transaction to today; **Custom** takes a From and To date (future dates can't be picked).
+- **Breakdown:** a month is charted week by week (1–7, 8–14, 15–21, 22–end); quarters, half-years and years month by month. A period that is still running shows only the weeks or months that have started, marked "to date". All time and Custom pick the step from the length: weeks up to about 2 months, months up to 2 years, quarters beyond.
+- **Spending averages:** average spending per day, week and month over the chosen window (up to today if it's still running), plus a dashed "average spending" line across the income vs. expenses chart.
+- **Compared with the period before:** (Custom: the same number of days just before it; All time has nothing to compare with) income and spending show the change from the previous period (green when it's good news, red when it isn't). While a period is still running it's compared with the same point in the previous one, so the first half of October is measured against the first half of September, not all of it.
 - **Every chart follows the period:** income vs. expenses, card spending and debt, spending by category, the savings rate for the period (with a month-by-month trend for quarters and longer) and the bank & cash balance (daily for a month or quarter, weekly for longer). Debt-to-income uses your recent average, so it doesn't change with the period.
 - **Keeps your place:** switching from *Q2 2026* to Month shows June 2026; the chosen view is remembered while the app is open. The back arrow stops at your oldest transaction.
 

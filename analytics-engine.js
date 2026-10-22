@@ -76,7 +76,39 @@
     const shown = buckets.filter((b) => b.from <= now);
     const isCurrent = start <= now && now <= end;
     const elapsedDays = isCurrent ? Math.round((parseISO(now) - parseISO(start)) / 864e5) : null;
-    return { type, offset, start, end, label, sub, months: all.filter((k) => k <= cur), buckets: shown.length ? shown : buckets.slice(0, 1), isCurrent, elapsedDays };
+    const last = isCurrent ? now : end;
+    return { type, offset, start, end, label, sub, months: all.filter((k) => k <= cur), buckets: shown.length ? shown : buckets.slice(0, 1), isCurrent, elapsedDays,
+      days: Math.round((parseISO(last) - parseISO(start)) / 864e5) + 1, unit: type === 'month' ? 'week' : 'month' };
+  }
+  /**
+   * Any date window (All time / Custom range), shaped like period(). Buckets follow the span: weeks up to ~2 months,
+   * months up to 2 years, quarters beyond. Dates after today are cut off.
+   */
+  function range(from, to, today = new Date(), type = 'custom') {
+    const now = toISO(today);
+    let start = String(from || now).slice(0, 10), end = [String(to || now).slice(0, 10), now].sort()[0];
+    if (start > end) [start, end] = [end, start];
+    const days = Math.round((parseISO(end) - parseISO(start)) / 864e5) + 1;
+    const fmtDay = (iso) => { const d = parseISO(iso); return `${MON[d.getMonth()]} ${d.getDate()}`; };
+    const fmtLong = (iso) => { const d = parseISO(iso); return `${MON[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`; };
+    let buckets = [];
+    if (days <= 62) {
+      for (let a = start; a <= end; a = addDays(a, 7)) { const b = [addDays(a, 6), end].sort()[0]; buckets.push({ key: a, label: fmtDay(a), long: `${fmtDay(a)} \u2013 ${fmtDay(b)}`, from: a, to: b }); }
+    } else {
+      const m0 = start.slice(0, 7), m1 = end.slice(0, 7);
+      const months = []; for (let m = m0; m <= m1; m = addMonths(m, 1)) months.push(m);
+      const clip = (b) => ({ ...b, from: [b.from, start].sort()[1], to: [b.to, end].sort()[0] });
+      if (months.length <= 24) buckets = months.map((m) => clip(monthBucket(m)));
+      else {
+        const byQ = new Map();
+        months.forEach((m) => { const [y, mm] = m.split('-').map(Number), q = Math.floor((mm - 1) / 3); const k = `${y}-Q${q + 1}`; if (!byQ.has(k)) byQ.set(k, { key: k, label: `Q${q + 1} '${String(y).slice(2)}`, long: `Q${q + 1} ${y}`, from: m + '-01', to: monthEnd(m) }); else byQ.get(k).to = monthEnd(m); });
+        buckets = [...byQ.values()].map(clip);
+      }
+    }
+    const label = type === 'all' ? 'All time' : `${fmtLong(start)} \u2013 ${fmtLong(end)}`;
+    const months = []; for (let m = start.slice(0, 7); m <= end.slice(0, 7); m = addMonths(m, 1)) months.push(m);
+    return { type, offset: 0, start, end, label, sub: type === 'all' ? `${fmtLong(start)} \u2013 today` : `${days} day${days === 1 ? '' : 's'}`, months, buckets, days,
+      unit: days <= 62 ? 'week' : months.length <= 24 ? 'month' : 'quarter', isCurrent: false, elapsedDays: null };
   }
   /** Offset of the `type` period that contains month `key` (used to keep your place when switching period type). */
   function periodOffsetFor(type, key, today = new Date()) {
@@ -90,6 +122,12 @@
    * at the same number of days in, so a half-finished month is not compared with a whole one.
    */
   function previousTotals(data, p, today = new Date()) {
+    if (p.type === 'all') return null; // nothing before "all time"
+    if (p.type === 'custom') { // the same number of days just before the range
+      const days = Math.round((parseISO(p.end) - parseISO(p.start)) / 864e5) + 1, from = addDays(p.start, -days), to = addDays(p.start, -1);
+      const [tot] = monthly(data, [{ key: 'prev', label: 'previous', from, to }]);
+      return { ...tot, label: `the previous ${days} days`, partial: false };
+    }
     const prev = period(p.type, p.offset - 1, today);
     const to = p.isCurrent ? [addDays(prev.start, p.elapsedDays), prev.end].sort()[0] : prev.end;
     const [tot] = monthly(data, [{ key: 'prev', label: prev.label, from: prev.start, to }]);
@@ -359,14 +397,18 @@
 
   const charts = {
     /** Income next to total expenses, expenses stacked by bank / credit / cash. */
-    incomeExpense(series, t, fmt) {
+    incomeExpense(series, t, fmt, opts = {}) {
       const s = t.series;
-      return { type: 'bar', data: { labels: series.map((m) => m.label), datasets: [
+      const ds = [
         bar('Income', series.map((m) => m.income), s[0], 'income'),
         bar('Credit card charges', series.map((m) => m.credit), s[1], 'expense', { borderRadius: 0 }),
         bar('Bank outflows', series.map((m) => m.bank), s[2], 'expense', { borderRadius: 0, ...gapStack(t) }),
         bar('Cash spent', series.map((m) => m.cash), s[3], 'expense', { borderRadius: { topLeft: 6, topRight: 6 }, ...gapStack(t) }),
-      ] }, options: baseOptions(t, fmt, {}, 'bar') };
+      ];
+      // Optional dashed reference line: average spending per bucket over the window.
+      if (opts.avgExpense > 0 && series.length > 1) ds.push({ type: 'line', label: opts.avgLabel || 'Average spending', data: series.map(() => Math.round(opts.avgExpense * 100) / 100), stack: 'avg',
+        borderColor: t.ink2, backgroundColor: t.ink2, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, pointHitRadius: 8, fill: false, tension: 0 });
+      return { type: 'bar', data: { labels: series.map((m) => m.label), datasets: ds }, options: baseOptions(t, fmt, {}, 'bar') };
     },
     /** Monthly credit charges stacked per card. */
     creditSpending(cc, labels, t, fmt) {
@@ -433,7 +475,7 @@
 
   global.Analytics = {
     version: '1.0.0', CHART_URL,
-    monthsBack, shortMonth, monthEnd, period, periodOffsetFor, previousTotals, monthly, categories, creditCards, cashFlow, cashFlowRange, funds, monthlyEssentials, indicators,
+    monthsBack, shortMonth, monthEnd, period, range, periodOffsetFor, previousTotals, monthly, categories, creditCards, cashFlow, cashFlowRange, funds, monthlyEssentials, indicators,
     loadChart, theme, charts, renderImages, effect,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

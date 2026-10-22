@@ -58,6 +58,7 @@ test('everything survives a refresh: statements, recategorisations, quick log, c
   await page.keyboard.press('Escape');
   await expect(page.locator('[role=dialog]')).toHaveCount(0);
   await page.getByRole('switch', { name: 'Privacy mode' }).click();
+  await expect(page.getByRole('switch', { name: 'Privacy mode' })).toHaveAttribute('aria-checked', 'true'); // saved
 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible({ timeout: 60_000 });

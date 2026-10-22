@@ -621,15 +621,15 @@
   </script>
 
   <!-- Monthly report builder + client-side download (see monthly-report.js) -->
-  <script src="./monthly-report.js?v=1.19.0"></script>
+  <script src="./monthly-report.js?v=1.20.0"></script>
   <!-- Recurring subscriptions/bills detection + local reminders (see recurring-scanner.js) -->
   <!-- PDF/CSV statement parsing for the Upload tab (see statement-parser.js) -->
-  <script src="./statement-parser.js?v=1.19.0"></script>
-  <script src="./recurring-scanner.js?v=1.19.0"></script>
+  <script src="./statement-parser.js?v=1.20.0"></script>
+  <script src="./recurring-scanner.js?v=1.20.0"></script>
   <!-- Financial health score, 50/30/20 and debt payoff maths (see advisor-engine.js) -->
-  <script src="./advisor-engine.js?v=1.19.0"></script>
+  <script src="./advisor-engine.js?v=1.20.0"></script>
   <!-- Analytics calculations + Chart.js configs; savings funds (see analytics-engine.js) -->
-  <script src="./analytics-engine.js?v=1.19.0"></script>
+  <script src="./analytics-engine.js?v=1.20.0"></script>
 
   <!-- =====================================================================
        React app (JSX compiled in-browser by Babel Standalone)
@@ -2709,8 +2709,10 @@
     );
   }
 
-  const PERIODS = [{ value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' }, { value: 'half', label: 'Half-year' }, { value: 'year', label: 'Year' }];
-  const PERIOD_NOUN = { month: 'month', quarter: 'quarter', half: 'half-year', year: 'year' };
+  const PERIODS = [{ value: 'month', label: 'Month' }, { value: 'quarter', label: 'Quarter' }, { value: 'half', label: 'Half-year' }, { value: 'year', label: 'Year' }, { value: 'all', label: 'All time' }, { value: 'custom', label: 'Custom' }];
+  const PERIOD_NOUN = { month: 'month', quarter: 'quarter', half: 'half-year', year: 'year', all: 'period', custom: 'period' };
+  const PERIOD_LEN = { month: 1, quarter: 3, half: 6, year: 12 };
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const readSession = (k, d) => { try { return sessionStorage.getItem(k) || d; } catch (_) { return d; } };
   const writeSession = (k, v) => { try { sessionStorage.setItem(k, v); } catch (_) {} };
 
@@ -2722,18 +2724,62 @@
     return <span className={cls('num inline-flex items-center gap-0.5 text-[11px] font-bold', good ? 't-income' : 't-expense')}><Icon name={up ? 'ArrowUpRight' : 'ArrowDownRight'} size={12} strokeWidth={2.6} />{Math.abs(ch) >= 10 ? '10x+' : `${Math.round(Math.abs(ch) * 100)}%`}</span>;
   }
 
-  // Month / Quarter / Half-year / Year picker with arrows to step through calendar periods.
-  function PeriodPicker({ type, setType, p, onStep, canBack }) {
+  // Timeline bar: presets, then Year + sub-period dropdowns with arrows (calendar periods), or a date range (Custom).
+  // Years run from the oldest saved transaction to this year; periods that haven't started yet are disabled.
+  function TimelineBar({ type, setType, p, setOffset, earliest, custom, setCustom }) {
+    const today = todayISO(), curKey = today.slice(0, 7), firstKey = (earliest || today).slice(0, 7);
+    const len = PERIOD_LEN[type];
+    const year = Number(p.start.slice(0, 4)), startMonth = Number(p.start.slice(5, 7));
+    const years = []; for (let y = Number(curKey.slice(0, 4)); y >= Number(firstKey.slice(0, 4)); y--) years.push(y);
+    const subs = len && len < 12 ? Array.from({ length: 12 / len }, (_, k) => {
+      const m0 = k * len + 1, m1 = m0 + len - 1;
+      const label = type === 'month' ? MONTH_NAMES[k] : type === 'quarter' ? `Q${k + 1} (${MONTH_NAMES[m0 - 1].slice(0, 3)}\u2013${MONTH_NAMES[m1 - 1].slice(0, 3)})` : `H${k + 1} (${MONTH_NAMES[m0 - 1].slice(0, 3)}\u2013${MONTH_NAMES[m1 - 1].slice(0, 3)})`;
+      return { k, label, first: `${year}-${String(m0).padStart(2, '0')}`, last: `${year}-${String(m1).padStart(2, '0')}` };
+    }) : [];
+    const allowed = (sp) => sp.first <= curKey && sp.last >= firstKey; // not in the future, not before your data
+    const goTo = (key) => setOffset(Analytics.periodOffsetFor(type, key));
+    const pickYear = (y) => {
+      if (!len || len === 12) return goTo(`${y}-01`);
+      const k = Math.floor((startMonth - 1) / len), cand = subs.map((sp) => ({ ...sp, first: `${y}${sp.first.slice(4)}`, last: `${y}${sp.last.slice(4)}` }));
+      const ok = cand.filter(allowed);
+      const pick = cand[k] && allowed(cand[k]) ? cand[k] : ok.length ? (cand[k].first > curKey ? ok[ok.length - 1] : ok[0]) : cand[0];
+      goTo(pick.first);
+    };
+    const canBack = type !== 'all' && type !== 'custom' && !!earliest && earliest < p.start;
+    const chip = (o) => (
+      <button key={o.value} type="button" onClick={() => setType(o.value)} aria-pressed={type === o.value}
+        className={cls('press shrink-0 h-9 px-3.5 rounded-full text-sm font-semibold ring-1 ring-inset transition-colors', type === o.value ? 'bg-brand-500 text-white ring-brand-500 shadow-[0_6px_16px_-6px_rgba(16,185,129,.8)]' : 'bg-slate-900/[.04] dark:bg-white/[.06] text-slate-600 dark:text-slate-300 ring-slate-900/[.06] dark:ring-white/[.08]')}>{o.label}</button>
+    );
+    const sel = 'h-10 rounded-2xl border border-slate-200/80 dark:border-white/[.08] bg-white/80 dark:bg-white/[.05] px-2.5 text-sm font-semibold min-w-0';
+    const arrow = (dir) => (
+      <button type="button" onClick={() => setOffset((o) => Math.min(0, o + dir))} disabled={dir < 0 ? !canBack : p.offset >= 0} aria-label={`${dir < 0 ? 'Previous' : 'Next'} ${PERIOD_NOUN[type]}`}
+        className="press w-10 h-10 shrink-0 grid place-items-center rounded-2xl bg-slate-900/[.05] dark:bg-white/[.07] disabled:opacity-30"><Icon name={dir < 0 ? 'ChevronLeft' : 'ChevronRight'} size={18} /></button>
+    );
     return (
-      <div className="mt-3">
-        <Segmented value={type} onChange={setType} options={PERIODS} />
-        <div className="card mt-2.5 flex items-center gap-2 p-1.5" data-testid="period-nav">
-          <button type="button" onClick={() => onStep(-1)} disabled={!canBack} aria-label={`Previous ${PERIOD_NOUN[type]}`} className="press w-10 h-10 grid place-items-center rounded-2xl bg-slate-900/[.05] dark:bg-white/[.07] disabled:opacity-30"><Icon name="ChevronLeft" size={18} /></button>
-          <div key={p.label} className="flex-1 text-center fade-in" aria-live="polite">
+      <div className="mt-3" data-testid="timeline">
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-4 px-4 pb-0.5" role="group" aria-label="Time period">{PERIODS.map(chip)}</div>
+        <div className="card mt-2.5 p-1.5" data-testid="period-nav">
+          {len ? (
+            <div className="flex items-center gap-1.5">
+              {arrow(-1)}
+              <select className={cls(sel, 'flex-1')} value={year} onChange={(e) => pickYear(Number(e.target.value))} aria-label="Year">
+                {years.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+              {subs.length > 0 && <select className={cls(sel, 'flex-[1.6]')} value={Math.floor((startMonth - 1) / len)} onChange={(e) => goTo(subs[Number(e.target.value)].first)} aria-label={type === 'month' ? 'Month' : type === 'quarter' ? 'Quarter' : 'Half'}>
+                {subs.map((sp) => <option key={sp.k} value={sp.k} disabled={!allowed(sp)}>{sp.label}</option>)}
+              </select>}
+              {arrow(1)}
+            </div>
+          ) : type === 'custom' ? (
+            <div className="grid grid-cols-2 gap-1.5">
+              <label className="text-[11px] font-semibold text-slate-500 px-1">From<input type="date" className={cls(sel, 'w-full mt-0.5')} value={custom.from} min={earliest || undefined} max={custom.to || today} onChange={(e) => e.target.value && setCustom({ ...custom, from: e.target.value })} aria-label="From date" /></label>
+              <label className="text-[11px] font-semibold text-slate-500 px-1">To<input type="date" className={cls(sel, 'w-full mt-0.5')} value={custom.to} min={custom.from || earliest || undefined} max={today} onChange={(e) => e.target.value && setCustom({ ...custom, to: e.target.value })} aria-label="To date" /></label>
+            </div>
+          ) : null}
+          <div key={p.label} className="text-center fade-in pt-1.5 pb-0.5" aria-live="polite">
             <p className="font-extrabold tracking-tight leading-tight" data-testid="period-label">{p.label}</p>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">{[p.sub, p.isCurrent ? 'to date' : ''].filter(Boolean).join(' \u00b7 ') || (p.type === 'month' ? 'by week' : 'by month')}</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">{[p.sub, p.isCurrent ? 'to date' : '', `by ${p.unit}`].filter(Boolean).join(' \u00b7 ')}</p>
           </div>
-          <button type="button" onClick={() => onStep(1)} disabled={p.offset >= 0} aria-label={`Next ${PERIOD_NOUN[type]}`} className="press w-10 h-10 grid place-items-center rounded-2xl bg-slate-900/[.05] dark:bg-white/[.07] disabled:opacity-30"><Icon name="ChevronRight" size={18} /></button>
         </div>
       </div>
     );
@@ -2744,20 +2790,28 @@
     const { data, fmt, go } = useApp();
     const [type, setTypeRaw] = useState(() => { const v = readSession('cw.anPeriod', 'month'); return PERIOD_NOUN[v] ? v : 'month'; });
     const [offset, setOffset] = useState(() => Math.min(0, Number(readSession('cw.anOffset', '0')) || 0));
+    const [custom, setCustomRaw] = useState(() => { try { const c = JSON.parse(readSession('cw.anCustom', 'null')); if (c && c.from && c.to) return c; } catch (_) {} const to = todayISO(), d = parseISO(to); d.setDate(d.getDate() - 89); return { from: toISO(d), to }; });
     const [ccView, setCcView] = useState('spending');
-    const p = useMemo(() => Analytics.period(type, offset), [type, offset]);
-    useEffect(() => { writeSession('cw.anPeriod', type); writeSession('cw.anOffset', String(offset)); }, [type, offset]);
-    // Switching type keeps your place: e.g. Q2 2026 -> Month shows June 2026.
-    const setType = (t) => { setTypeRaw(t); setOffset(Analytics.periodOffsetFor(t, p.months[p.months.length - 1] || p.start.slice(0, 7))); };
+    // The whole history is in memory (loaded from IndexedDB at launch), so any window is just a date filter on it.
     const earliest = useMemo(() => data.transactions.reduce((m, t) => (!m || t.date < m ? t.date : m), null), [data.transactions]);
+    const p = useMemo(() => (type === 'all' ? Analytics.range(earliest || todayISO(), todayISO(), new Date(), 'all')
+      : type === 'custom' ? Analytics.range(custom.from, custom.to, new Date(), 'custom') : Analytics.period(type, offset)), [type, offset, custom.from, custom.to, earliest]);
+    useEffect(() => { writeSession('cw.anPeriod', type); writeSession('cw.anOffset', String(offset)); writeSession('cw.anCustom', JSON.stringify(custom)); }, [type, offset, custom]);
+    const setCustom = (c) => setCustomRaw(c.from > c.to ? { from: c.to, to: c.from } : c);
+    // Switching type keeps your place: e.g. Q2 2026 -> Month shows June 2026; Custom starts from the current window.
+    const setType = (t) => {
+      const anchor = (p.end > todayISO() ? todayISO() : p.end).slice(0, 7);
+      if (t === 'custom' && type !== 'custom') setCustomRaw({ from: p.start, to: p.end > todayISO() ? todayISO() : p.end });
+      if (PERIOD_LEN[t]) setOffset(Analytics.periodOffsetFor(t, anchor));
+      setTypeRaw(t);
+    };
     const canBack = !!earliest && earliest < p.start;
-    const step = (d) => setOffset((o) => Math.min(0, o + d));
     const buckets = p.buckets, labels = buckets.map((b) => b.label);
-    const unit = type === 'month' ? 'Week' : 'Month';
+    const unit = p.unit[0].toUpperCase() + p.unit.slice(1);
     const series = useMemo(() => Analytics.monthly(data, buckets), [data, p]);
     const cc = useMemo(() => Analytics.creditCards(data, buckets), [data, p]);
     const cat = useMemo(() => Analytics.categories(data, buckets), [data, p]);
-    const cfStep = type === 'month' || type === 'quarter' ? 'day' : 'week';
+    const cfStep = p.days <= 120 ? 'day' : 'week';
     const cf = useMemo(() => Analytics.cashFlowRange(data, p.start, p.end, cfStep), [data, p, cfStep]);
     const ind = useMemo(() => Analytics.indicators(data, Analytics.monthsBack(6)), [data]);
     const prev = useMemo(() => Analytics.previousTotals(data, p), [data, p]);
@@ -2775,26 +2829,34 @@
 
     if (!hasAny) return <Card className="mt-4"><Empty icon="ChartColumn" title="No data to chart yet" body="Import a statement or log a few entries and your charts appear here." action={<Button variant="secondary" onClick={() => go('upload')}>Import a statement</Button>} /></Card>;
 
-    const picker = <PeriodPicker type={type} setType={setType} p={p} onStep={step} canBack={canBack} />;
-    if (!hasPeriod) return <div>{picker}<Card className="mt-4"><Empty icon="CalendarX2" title={`Nothing recorded in ${p.label}`} body={canBack ? 'Step back to an earlier period, or pick a longer one.' : 'Import statements for this period to see it here.'} /></Card></div>;
+    const picker = <TimelineBar type={type} setType={setType} p={p} setOffset={setOffset} earliest={earliest} custom={custom} setCustom={setCustom} />;
+    if (!hasPeriod) return <div>{picker}<Card className="mt-4"><Empty icon="CalendarX2" title={`Nothing recorded in ${p.label}`} body={canBack ? 'Pick an earlier period, or a longer one.' : 'Import statements for this period to see it here.'} /></Card></div>;
 
     const net = totals.income - totals.expense;
-    const vs = `vs ${prev.partial ? 'same point in ' : ''}${prev.label}`;
+    const vs = prev ? `vs ${prev.partial ? 'same point in ' : ''}${prev.label}` : '';
+    // Averages over the days in the window (up to today for a period still running).
+    const avg = { day: totals.expense / p.days, week: (totals.expense / p.days) * 7, month: (totals.expense / p.days) * 30.44, incomeMonth: (totals.income / p.days) * 30.44 };
+    const perBucket = totals.expense / Math.max(1, series.length);
     return (
       <div>
         {picker}
-        <div key={type + offset} className="fade-in">
+        <div key={p.label} className="fade-in">
 
         {/* Income vs expenses */}
         <SectionTitle>Income vs. expenses</SectionTitle>
         <Card className="p-4">
           <div className="grid grid-cols-3 gap-2 mb-1" data-testid="period-totals">
-            <div><p className="text-xs text-slate-500">Income</p><p className="num font-bold t-income"><AnimatedMoney value={totals.income} short /></p><ChangeChip now={totals.income} before={prev.income} /></div>
-            <div><p className="text-xs text-slate-500">Expenses</p><p className="num font-bold"><AnimatedMoney value={totals.expense} short /></p><ChangeChip now={totals.expense} before={prev.expense} upGood={false} /></div>
+            <div><p className="text-xs text-slate-500">Income</p><p className="num font-bold t-income"><AnimatedMoney value={totals.income} short /></p>{prev && <ChangeChip now={totals.income} before={prev.income} />}</div>
+            <div><p className="text-xs text-slate-500">Expenses</p><p className="num font-bold"><AnimatedMoney value={totals.expense} short /></p>{prev && <ChangeChip now={totals.expense} before={prev.expense} upGood={false} />}</div>
             <div><p className="text-xs text-slate-500">Net</p><p className={cls('num font-bold', net < 0 && 't-expense')}><AnimatedMoney value={net} short /></p></div>
           </div>
-          {(prev.income > 0 || prev.expense > 0) && <p className="text-[11px] text-slate-400 mb-2">Changes are {vs} (income <span className="num">{fmt(prev.income, true)}</span>, spending <span className="num">{fmt(prev.expense, true)}</span>).</p>}
-          <ChartBox height={240} label={`Income versus expenses by ${unit.toLowerCase()} in ${p.label}, expenses stacked by credit, bank and cash`} dataKey={JSON.stringify(series)} build={(th, f) => Analytics.charts.incomeExpense(series, th, f)} />
+          {prev && (prev.income > 0 || prev.expense > 0) && <p className="text-[11px] text-slate-400 mb-2">Changes are {vs} (income <span className="num">{fmt(prev.income, true)}</span>, spending <span className="num">{fmt(prev.expense, true)}</span>).</p>}
+          <div className="grid grid-cols-3 gap-2 my-2 rounded-2xl bg-slate-900/[.035] dark:bg-white/[.04] p-2.5" data-testid="spending-averages">
+            <div><p className="text-[11px] text-slate-500">Avg spend / day</p><p className="num text-sm font-bold"><AnimatedMoney value={avg.day} /></p></div>
+            <div><p className="text-[11px] text-slate-500">/ week</p><p className="num text-sm font-bold"><AnimatedMoney value={avg.week} short /></p></div>
+            <div><p className="text-[11px] text-slate-500">/ month</p><p className="num text-sm font-bold"><AnimatedMoney value={avg.month} short /></p></div>
+          </div>
+          <ChartBox height={240} label={`Income versus expenses by ${p.unit} in ${p.label}, expenses stacked by credit, bank and cash, with the average spending per ${p.unit}`} dataKey={JSON.stringify(series)} build={(th, f) => Analytics.charts.incomeExpense(series, th, f, { avgExpense: perBucket, avgLabel: `Avg spending / ${p.unit}` })} />
           <NumbersTable head={[unit, 'Income', 'Cards', 'Bank', 'Cash', 'Total out']} rows={[...series.map((m) => [m.long, fmt(m.income), fmt(m.credit), fmt(m.bank), fmt(m.cash), fmt(m.expense)]), ['Total', fmt(totals.income), fmt(series.reduce((s, m) => s + m.credit, 0)), fmt(series.reduce((s, m) => s + m.bank, 0)), fmt(series.reduce((s, m) => s + m.cash, 0)), fmt(totals.expense)]]} />
         </Card>
 
@@ -2862,9 +2924,9 @@
             <SemiGauge value={sr} level={srLevel} center={sr == null ? '-' : `${Math.round(sr * 100)}%`} sub="of income saved" />
             <div className="flex justify-between items-center -mt-1"><StatusLabel level={srLevel}>{srText}</StatusLabel>
               <span className="num text-xs text-slate-500">{fmt(Math.max(0, net))} saved · {fmt(totals.expense)} spent</span></div>
-            {prev.savingsRate != null && <p className="text-xs text-slate-500 mt-1">{vs[0].toUpperCase() + vs.slice(1)}: <span className="num font-semibold">{Math.round(prev.savingsRate * 100)}%</span></p>}
+            {prev && prev.savingsRate != null && <p className="text-xs text-slate-500 mt-1">{vs[0].toUpperCase() + vs.slice(1)}: <span className="num font-semibold">{Math.round(prev.savingsRate * 100)}%</span></p>}
             {totals.toFunds > 0 && <p className="text-xs text-slate-500 mt-1">{fmt(totals.toFunds)} of it moved into your savings funds.</p>}
-            {type !== 'month' && series.length > 1 && <div className="mt-3"><ChartBox height={130} label="Savings rate by month" dataKey={'r' + JSON.stringify(series.map((m) => m.savingsRate))} build={(th) => Analytics.charts.savingsRate(series, th)} /></div>}
+            {p.unit !== 'week' && series.length > 1 && <div className="mt-3"><ChartBox height={130} label={`Savings rate by ${p.unit}`} dataKey={'r' + JSON.stringify(series.map((m) => m.savingsRate))} build={(th) => Analytics.charts.savingsRate(series, th)} /></div>}
           </Card>
           <Card className="p-4">
             <div className="flex items-baseline justify-between"><p className="font-semibold">Debt-to-income</p><span className="num text-2xl font-extrabold tracking-tight">{pctTxt(dti)}</span></div>
@@ -4045,7 +4107,7 @@
   }
 
   /* ================================================================= APP */
-  const APP_VERSION = '1.19.0'; // keep in step with sw.js VERSION and the ?v= on the script tags
+  const APP_VERSION = '1.20.0'; // keep in step with sw.js VERSION and the ?v= on the script tags
   const TABS = [
     { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     { id: 'transactions', label: 'Activity', aria: 'Transactions', icon: 'ArrowLeftRight' },

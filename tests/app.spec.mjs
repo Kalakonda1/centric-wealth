@@ -155,3 +155,71 @@ test('fluid hero draws a still frame with Reduce Motion', async ({ page }) => {
   });
   expect(painted).toBeGreaterThan(1000);
 });
+
+test('analytics timeline: any year back to the oldest transaction, sub-periods, all time, custom range; charts redraw', async ({ page }) => {
+  // 2+ years of monthly history: pay 3000+i and spending 900+10i on the 10th of each month since May 2024.
+  const rows = await page.evaluate(async () => {
+    const rows = [], now = new Date();
+    for (let i = 0; ; i++) {
+      const d = new Date(2024, 4 + i, 10); if (d > now) break;
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-10`;
+      rows.push({ date: iso, amount: 3000 + i, type: 'income', direction: 'in', category: 'Salary', description: 'Pay', accountType: 'bank', accountName: 'Checking' });
+      rows.push({ date: iso, amount: 900 + 10 * i, type: 'expense', direction: 'out', category: i % 2 ? 'Groceries' : 'Dining', description: 'Shop', accountType: 'bank', accountName: 'Checking' });
+    }
+    await FinanceDB.bulkPut('transactions', rows);
+    return rows;
+  });
+  const total = (from, to, type) => rows.filter((r) => r.type === type && r.date >= from && r.date <= to).reduce((s, r) => s + r.amount, 0);
+  const money = (n) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  await page.reload();
+  await page.getByRole('button', { name: 'Analytics' }).first().click();
+  const label = page.locator('[data-testid=period-label]');
+  const chartLabels = () => page.evaluate(() => Object.values(Chart.instances).map((c) => c.data.labels.join(',')).join(' | '));
+
+  // Year dropdown runs from the oldest transaction's year to this year
+  const now = new Date(), cy = now.getFullYear();
+  const years = await page.getByLabel('Year', { exact: true }).locator('option').allTextContents();
+  expect(years).toEqual(Array.from({ length: cy - 2024 + 1 }, (_, i) => String(cy - i)));
+
+  // Quarter: pick 2024 Q3 straight from the dropdowns
+  await page.getByRole('button', { name: 'Quarter', exact: true }).click();
+  await page.getByLabel('Year', { exact: true }).selectOption('2024');
+  await page.getByLabel('Quarter', { exact: true }).selectOption({ label: 'Q3 (Jul–Sep)' });
+  await expect(label).toHaveText('Q3 2024');
+  await expect(page.locator('[data-testid=period-totals]')).toContainText(money(total('2024-07-01', '2024-09-30', 'expense')));
+  await expect.poll(chartLabels).toContain("Jul '24,Aug '24,Sep '24");
+  // Q1 2024 is before the first transaction and disabled; future quarters of this year too
+  const q1 = page.getByLabel('Quarter', { exact: true }).locator('option', { hasText: 'Q1' });
+  await expect(q1).toBeDisabled();
+  await page.getByLabel('Year', { exact: true }).selectOption(String(cy));
+  const curQ = Math.floor(now.getMonth() / 3);
+  for (let k = 0; k < 4; k++) {
+    const opt = page.getByLabel('Quarter', { exact: true }).locator('option').nth(k);
+    if (k > curQ) await expect(opt).toBeDisabled(); else await expect(opt).toBeEnabled();
+  }
+
+  // Month: the months after this one are disabled
+  await page.getByRole('button', { name: 'Month', exact: true }).click();
+  const months = page.getByLabel('Month', { exact: true }).locator('option');
+  if (now.getMonth() < 11) await expect(months.nth(now.getMonth() + 1)).toBeDisabled();
+  await expect(months.nth(now.getMonth())).toBeEnabled();
+
+  // Year 2025 in full
+  await page.getByRole('button', { name: 'Year', exact: true }).click();
+  await page.getByLabel('Year', { exact: true }).selectOption('2025');
+  await expect(label).toHaveText('2025');
+  await expect(page.locator('[data-testid=period-totals]')).toContainText(`$${(total('2025-01-01', '2025-12-31', 'income') / 1000).toFixed(1)}K`); // 10k+ shows short
+  await expect(page.locator('[data-testid=spending-averages]')).toContainText('/ month');
+
+  // All time: every transaction
+  await page.getByRole('button', { name: 'All time', exact: true }).click();
+  await expect(label).toHaveText('All time');
+  await expect.poll(chartLabels).toContain("Q2 '24");
+  // Custom range
+  await page.getByRole('button', { name: 'Custom', exact: true }).click();
+  await page.getByLabel('From date').fill('2025-03-01');
+  await page.getByLabel('To date').fill('2025-04-30');
+  await expect(label).toHaveText('Mar 1, 2025 – Apr 30, 2025');
+  await expect(page.locator('[data-testid=period-totals]')).toContainText(money(total('2025-03-01', '2025-04-30', 'expense')));
+  await expect.poll(chartLabels).toContain('Mar 1,Mar 8');
+});
