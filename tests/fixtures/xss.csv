@@ -1,0 +1,6 @@
+Date,Description,Amount
+2026-10-01,"<img src=x onerror=""window.__xss=1"">",-12.34
+2026-10-02,"<script>window.__xss=2</script> Coffee",-4.50
+2026-10-03,"=HYPERLINK(""http://evil.example"",""click"")",-1.00
+2026-10-04,"INVOICE ‮gpj.exe",-2.00
+2026-10-05,"Grocer​​s [link](javascript:alert(1)) **bold**",-3.00

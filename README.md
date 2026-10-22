@@ -30,7 +30,7 @@ All paths are relative, so it works from a repo sub-path.
 Bump `VERSION` in `sw.js` on every deploy so returning visitors get the new files.
 
 
-**After every deploy**, bump three things together: `VERSION` in `sw.js`, `APP_VERSION` in `index.html`, and the `?v=` on the `<script>` tags. Open copies then pick up the new files automatically: the service worker fetches the app's own files from the network first and reloads the page once when the new version takes over. Settings shows the running version at the bottom ("Centric Wealth v1.18.0 · statement reader v1.4.0"). Offline, the saved copies are used.
+**After every deploy**, bump three things together: `VERSION` in `sw.js`, `APP_VERSION` in `index.html`, and the `?v=` on the `<script>` tags. Open copies then pick up the new files automatically: the service worker fetches the app's own files from the network first and reloads the page once when the new version takes over. Settings shows the running version at the bottom ("Centric Wealth v1.19.0 · statement reader v1.4.0"). Offline, the saved copies are used.
 ## Using FinanceDB elsewhere
 ```js
 await FinanceDB.put('transactions', { type: 'expense', amount: 12.5, category: 'Dining', date: '2026-10-21', description: 'Lunch' });
@@ -38,12 +38,25 @@ const oct = await FinanceDB.byIndex('transactions', 'date', '2026-10-01', '2026-
 const backup = await FinanceDB.exportAll();
 ```
 Stores: `transactions`, `debts`, `bills`, `budgets`, `accounts`, `settings`. To add a store or index, edit `SCHEMA` and bump `DB_VERSION`.
+`FinanceDB.backend` says where data lives (`indexeddb`, or `localstorage` / `memory` when the browser blocks IndexedDB). Every write is cleaned (`FinanceDB.cleanText`), backups are checked with `FinanceDB.validateBackup` before anything is written, and `FinanceDB.destroy()` deletes the whole database.
 
 ## Production notes
 - In-browser Babel compiles the JSX on every launch (~0.3–1 s on phones). For speed, precompile the `text/babel` script once with Babel and swap in the output.
 - The Tailwind Play CDN is meant for prototyping; for production, build a static CSS file with the Tailwind CLI.
 - Bill reminders fire when the app is opened or brought to the foreground. True background push needs a push server, which this app deliberately doesn't use.
-- Browsers can evict site storage. Use **Settings → Persistent storage** and make regular JSON backups.
+- Browsers can evict site storage. The app asks the browser to keep it once you have data (**Settings → Storage on this device** shows whether it agreed), but keep making backups.
+
+## Privacy & security (v1.19.0)
+
+Everything stays in this browser. These are the guardrails, all checked by `tests/security.spec.mjs`:
+
+- **Saved as you go, back after a refresh:** imported statements, your recategorisations and category rules, Quick Log entries, cards and their due dates, budgets, bills, funds and preferences are written to IndexedDB the moment you make them and load automatically on launch. If a browser blocks IndexedDB (some private modes), the app keeps a copy in `localStorage` instead; Settings → **Storage on this device** shows which is in use. Once you have data, the app asks the browser to protect it from automatic clean-up.
+- **Nothing leaves the device:** there are no analytics, servers or API calls, and a **Content-Security-Policy** in `index.html` makes the browser refuse any request except this site's own files and the pinned libraries on jsDelivr / the Tailwind CDN. A tracking pixel, `fetch` to an API or form post is blocked before it leaves the page; Settings → **Network guard** shows how many were blocked this session. (If you ever add a library from another CDN, add its host to the policy.)
+- **Privacy mode:** the eye in every page header (or Settings → Privacy mode) shows every amount as `$••••••` and hides card digits, including chart axes and tooltips. It stays on after a refresh. Inputs you are typing into, and exported files, still show real numbers.
+- **App lock:** Settings → **App lock** sets a 4–8 digit PIN (stored only as a salted PBKDF2-SHA-256 hash, never in backups). The app asks for it when it opens, after 1/2/5/15 minutes without use (default 2) and, if you leave it on, whenever you switch apps or tabs or turn off the screen. While locked, the app is hidden and can't be tapped or read by a screen reader. Five wrong PINs start a wait (30 s, doubling up to 15 min) that survives a refresh. **Face ID / fingerprint** can be added where the phone supports it: it uses the device's own lock through WebAuthn, and the app checks the answer itself (challenge, site, user verified and the signature), with no server. A forgotten PIN can't be recovered; the only way back in is to erase the data and restore a backup. The lock keeps people out of the app; the stored data itself isn't encrypted, so use an encrypted backup for any copy that leaves the device.
+- **Backups:** Settings → **Back up** makes an **encrypted** file (AES-256-GCM; key from your passphrase with PBKDF2-SHA-256, 600,000 rounds) or a plain JSON file. **Restore from backup** (or drop the `.json` on Upload) asks for the passphrase if needed, shows what's inside, then **merges** or **replaces**. Backups are validated first: unknown sections and settings are dropped, damaged entries are skipped, and the app lock is never restored from a file.
+- **Hostile text stays text:** the app never inserts HTML; React shows every description as plain text. On top of that, text is cleaned before it's stored or previewed: control characters, invisible zero-width characters and right-to-left overrides (which can make `gpj.exe` look like `exe.jpg`) are removed, and lengths are capped. The CSV export neutralises cells a spreadsheet would run as formulas (`=`, `+`, `-`, `@`), and the Markdown report escapes user text so it can't become a link, HTML or a table break.
+- **Erase all data:** Settings → **Erase all data** shows exactly what will go, then asks you to type `ERASE`. It deletes the IndexedDB database, the localStorage copy and the app's session keys (optionally also the offline copy of the app), then reloads empty. A Face ID / fingerprint passkey stays in the phone's password manager, where you can delete it.
 
 ## Statement parser (`statement-parser.js`)
 Reads bank and credit-card statements (PDF or CSV) in the browser, categorises them with a local rule dictionary, flags recurring charges and saves them into the app's IndexedDB. No server or API keys.

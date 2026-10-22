@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <!-- Privacy guardrail enforced by the browser: the page may only load the app's own files and the pinned
+       libraries, and may only connect to this site and jsDelivr / the Tailwind CDN (to download those libraries).
+       Any other request (analytics, an API, a tracking pixel, a form post) is refused before it leaves the device.
+       'unsafe-eval' / 'unsafe-inline' are needed because JSX is compiled in the browser (no build step). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://cdn.jsdelivr.net https://cdn.tailwindcss.com; worker-src 'self' blob: https://cdn.jsdelivr.net; manifest-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>Centric Wealth — Private Finance</title>
   <meta name="description" content="Offline-first personal finance tracker. All data stays on this device." />
   <meta name="theme-color" content="#05070e" media="(prefers-color-scheme: dark)" />
@@ -206,6 +211,7 @@
     @keyframes glowRing { 0% { box-shadow: 0 0 0 0 rgba(56,189,248,.5); } 100% { box-shadow: 0 0 0 18px rgba(56,189,248,0); } }
     .glow { animation: glowRing 1.1s ease-out; }
     /* Card due within 3 days or overdue: the badge pulses */
+    @keyframes shakeX { 0%, 100% { transform: none; } 20%, 60% { transform: translateX(-9px); } 40%, 80% { transform: translateX(9px); } }
     @keyframes pulseRed { 0% { box-shadow: 0 0 0 0 rgba(225,29,72,.55); } 70% { box-shadow: 0 0 0 9px rgba(225,29,72,0); } 100% { box-shadow: 0 0 0 0 rgba(225,29,72,0); } }
     .pulse-red { animation: pulseRed 1.6s ease-out infinite; }
 
@@ -223,14 +229,16 @@
   <noscript>Centric Wealth needs JavaScript enabled. Your data never leaves this device.</noscript>
 
   <!-- =====================================================================
-       FinanceDB — native IndexedDB wrapper (plain JS, no dependencies).
-       Exposed as window.FinanceDB so it can be reused outside React.
+       FinanceDB — local storage wrapper (plain JS, no dependencies). Exposed as window.FinanceDB.
+       IndexedDB normally; if the browser blocks it (some private modes), a localStorage copy instead,
+       and as a last resort memory only (Settings says so). Every record is cleaned before it is stored.
        ===================================================================== -->
   <script>
   (function () {
     'use strict';
     const DB_NAME = 'centric-wealth';
     const DB_VERSION = 1;
+    const LS_KEY = 'cw.db.v1';
 
     // Schema: bump DB_VERSION and add to this map to migrate.
     const SCHEMA = {
@@ -241,15 +249,45 @@
       accounts:     { keyPath: 'id', indexes: [] },
       settings:     { keyPath: 'key', indexes: [] },
     };
+    // Settings that may come from (and go into) a backup. The app lock (PIN hash, device key) never leaves this device.
+    const BACKUP_SETTINGS = ['currency', 'theme', 'notify', 'reminderDays', 'debtExtra', 'debtStrategy', 'lastBackup', 'categoryRules', 'recurringDecisions', 'reminderSchedule', 'notificationLog', 'privacy'];
+    const DEVICE_ONLY_SETTINGS = ['lock', 'lockFails'];
 
-    let dbPromise = null;
+    /* ---------- text safety ----------
+       Everything is rendered as plain text by React (never as HTML), and on top of that stored text is cleaned:
+       control characters, bidi overrides (which can make "gpj.exe" display as "exe.jpg") and invisible
+       zero-width characters are removed, and lengths are capped. */
+    const UNSAFE_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F​‎‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+    const TEXT_FIELDS = ['description', 'name', 'category', 'accountName', 'counterparty', 'purpose', 'statementCategory', 'person', 'merchant', 'match', 'type', 'kind', 'frequency', 'source', 'entryKind', 'last4'];
+    const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+    function cleanText(v, max = 300) {
+      if (typeof v !== 'string') return v;
+      return v.replace(UNSAFE_CHARS, '').replace(/[\t\r\n]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, max);
+    }
+    function cleanValue(v, depth = 0) {
+      if (depth > 6) return undefined;
+      if (typeof v === 'string') return v.replace(UNSAFE_CHARS, '').slice(0, 2000);
+      if (Array.isArray(v)) return v.slice(0, 50000).map((x) => cleanValue(x, depth + 1));
+      if (v && typeof v === 'object') {
+        const out = {};
+        for (const k of Object.keys(v)) if (!BAD_KEYS.has(k)) out[k] = TEXT_FIELDS.includes(k) ? cleanText(v[k]) : cleanValue(v[k], depth + 1);
+        return out;
+      }
+      return v;
+    }
+    const cleanRecord = (rec) => cleanValue(rec);
+
+    /* ---------- backend selection ---------- */
+    let dbPromise = null, backend = null, mem = null, readyPromise = null;
+    const emptyMem = () => Object.fromEntries(Object.keys(SCHEMA).map((n) => [n, {}]));
 
     function open() {
       if (dbPromise) return dbPromise;
       dbPromise = new Promise((resolve, reject) => {
-        if (!('indexedDB' in window)) return reject(new Error('IndexedDB is not supported in this browser.'));
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = (e) => {
+        if (!('indexedDB' in window) || !window.indexedDB) return reject(new Error('IndexedDB is not supported in this browser.'));
+        let req;
+        try { req = indexedDB.open(DB_NAME, DB_VERSION); } catch (e) { return reject(e); }
+        req.onupgradeneeded = () => {
           const db = req.result;
           const tx = req.transaction;
           for (const [name, def] of Object.entries(SCHEMA)) {
@@ -263,14 +301,48 @@
         };
         req.onsuccess = () => {
           const db = req.result;
-          db.onversionchange = () => { db.close(); dbPromise = null; }; // another tab upgraded
+          db.onversionchange = () => { db.close(); dbPromise = null; }; // another tab upgraded or erased the data
           resolve(db);
         };
         req.onerror = () => reject(req.error);
         req.onblocked = () => console.warn('[FinanceDB] upgrade blocked — close other tabs of this app.');
       });
+      dbPromise.catch(() => { dbPromise = null; });
       return dbPromise;
     }
+
+    function lsLoad() {
+      const m = emptyMem();
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        const d = raw ? JSON.parse(raw) : null;
+        if (d && typeof d === 'object') for (const n of Object.keys(SCHEMA)) if (d[n] && typeof d[n] === 'object' && !Array.isArray(d[n])) m[n] = d[n];
+      } catch (_) {}
+      return m;
+    }
+    function lsSave() {
+      if (backend !== 'localstorage') return;
+      try { localStorage.setItem(LS_KEY, JSON.stringify(mem)); }
+      catch (e) { throw new Error('This browser’s storage is full. Back up and erase old data, or use a browser that allows IndexedDB.'); }
+    }
+    /** Resolves to 'indexeddb', 'localstorage' or 'memory'. */
+    function ready() {
+      if (readyPromise) return readyPromise;
+      readyPromise = (async () => {
+        try {
+          await Promise.race([open(), new Promise((_, rej) => setTimeout(() => rej(new Error('IndexedDB did not respond')), 6000))]);
+          backend = 'indexeddb';
+        } catch (e) {
+          console.warn('[FinanceDB] IndexedDB unavailable, using fallback:', e && e.message);
+          try { localStorage.setItem('cw.probe', '1'); localStorage.removeItem('cw.probe'); backend = 'localstorage'; mem = lsLoad(); }
+          catch (_) { backend = 'memory'; mem = emptyMem(); }
+        }
+        return backend;
+      })();
+      return readyPromise;
+    }
+    const local = async () => (await ready()) !== 'indexeddb';
+    const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
 
     const promisify = (req) => new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
 
@@ -292,73 +364,272 @@
 
     const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
     const stamp = (obj) => { const now = new Date().toISOString(); return { createdAt: now, ...obj, updatedAt: now }; };
+    const prepare = (store, obj) => cleanRecord(stamp(SCHEMA[store].keyPath === 'id' && !obj.id ? { ...obj, id: uid() } : obj));
+    const keyOf = (store, rec) => rec[SCHEMA[store].keyPath];
+
+    /**
+     * Checks and cleans a backup before anything is written. Unknown stores and settings are dropped, records
+     * without a usable key or with an impossible date/amount are skipped (and counted), the app lock is never
+     * restored. Returns { stores, counts, skipped }.
+     */
+    function validateBackup(data) {
+      if (!data || typeof data !== 'object' || data.app !== 'centric-wealth' || !data.stores || typeof data.stores !== 'object') throw new Error('Not a Centric Wealth backup file.');
+      const stores = {}, counts = {}; let skipped = 0;
+      for (const n of Object.keys(SCHEMA)) {
+        const list = data.stores[n];
+        if (list == null) continue;
+        if (!Array.isArray(list)) throw new Error(`The backup's "${n}" section is damaged.`);
+        if (list.length > 200000) throw new Error('This backup is too large to restore.');
+        const out = [];
+        for (const raw of list) {
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { skipped++; continue; }
+          const rec = cleanRecord(raw);
+          if (n === 'settings') {
+            if (!BACKUP_SETTINGS.includes(rec.key)) { if (!DEVICE_ONLY_SETTINGS.includes(rec.key)) skipped++; continue; }
+          } else if (SCHEMA[n].keyPath === 'id') { if (rec.id == null || rec.id === '') rec.id = uid(); else rec.id = String(rec.id).slice(0, 100); }
+          else if (rec[SCHEMA[n].keyPath] == null || rec[SCHEMA[n].keyPath] === '') { skipped++; continue; }
+          if (n === 'transactions' && (!/^\d{4}-\d{2}-\d{2}/.test(String(rec.date || '')) || !isFinite(Number(rec.amount)))) { skipped++; continue; }
+          if (n === 'transactions') rec.amount = Math.abs(Number(rec.amount));
+          out.push(rec);
+        }
+        stores[n] = out; counts[n] = out.length;
+      }
+      return { stores, counts, skipped };
+    }
 
     const FinanceDB = {
       STORES: Object.keys(SCHEMA),
       uid,
       open,
-      getAll: (store) => withTx(store, 'readonly', (s) => promisify(s.getAll())),
-      get: (store, key) => withTx(store, 'readonly', (s) => promisify(s.get(key))),
-      count: (store) => withTx(store, 'readonly', (s) => promisify(s.count())),
-      /** Insert or update. Auto-assigns id (for id-keyed stores) and timestamps. */
-      put: (store, obj) => withTx(store, 'readwrite', (s) => {
-        const rec = stamp(SCHEMA[store].keyPath === 'id' && !obj.id ? { ...obj, id: uid() } : obj);
-        s.put(rec);
-        return rec;
-      }),
-      bulkPut: (store, arr) => withTx(store, 'readwrite', (s) => {
-        const out = arr.map((o) => stamp(SCHEMA[store].keyPath === 'id' && !o.id ? { ...o, id: uid() } : o));
-        out.forEach((r) => s.put(r));
-        return out.length;
-      }),
-      delete: (store, key) => withTx(store, 'readwrite', (s) => { s.delete(key); }),
-      clear: (store) => withTx(store, 'readwrite', (s) => { s.clear(); }),
+      ready,
+      cleanText,
+      validateBackup,
+      /** 'indexeddb' | 'localstorage' | 'memory' (null until the first call finishes). */
+      get backend() { return backend; },
+      getAll: async (store) => ((await local()) ? copy(Object.values(mem[store])) : withTx(store, 'readonly', (s) => promisify(s.getAll()))),
+      get: async (store, key) => ((await local()) ? copy(mem[store][key]) : withTx(store, 'readonly', (s) => promisify(s.get(key)))),
+      count: async (store) => ((await local()) ? Object.keys(mem[store]).length : withTx(store, 'readonly', (s) => promisify(s.count()))),
+      /** Insert or update. Auto-assigns id (for id-keyed stores) and timestamps; text is cleaned. */
+      put: async (store, obj) => {
+        const rec = prepare(store, obj);
+        if (await local()) { const k = keyOf(store, rec), prev = mem[store][k]; mem[store][k] = copy(rec); try { lsSave(); } catch (e) { if (prev) mem[store][k] = prev; else delete mem[store][k]; throw e; } return rec; }
+        return withTx(store, 'readwrite', (s) => { s.put(rec); return rec; });
+      },
+      bulkPut: async (store, arr) => {
+        const out = arr.map((o) => prepare(store, o));
+        if (await local()) { const before = copy(mem[store]); out.forEach((r) => { mem[store][keyOf(store, r)] = copy(r); }); try { lsSave(); } catch (e) { mem[store] = before; throw e; } return out.length; }
+        return withTx(store, 'readwrite', (s) => { out.forEach((r) => s.put(r)); return out.length; });
+      },
+      delete: async (store, key) => { if (await local()) { delete mem[store][key]; lsSave(); return; } return withTx(store, 'readwrite', (s) => { s.delete(key); }); },
+      clear: async (store) => { if (await local()) { mem[store] = {}; lsSave(); return; } return withTx(store, 'readwrite', (s) => { s.clear(); }); },
       /** Range query on an index, e.g. FinanceDB.byIndex('transactions','date','2026-10-01','2026-10-31') */
-      byIndex: (store, index, lower, upper) => withTx(store, 'readonly', (s) => {
-        const range = lower != null && upper != null ? IDBKeyRange.bound(lower, upper) : lower != null ? IDBKeyRange.only(lower) : null;
-        return promisify(s.index(index).getAll(range));
-      }),
+      byIndex: async (store, index, lower, upper) => {
+        if (await local()) {
+          const path = SCHEMA[store].indexes.find((i) => i[0] === index)[1];
+          return copy(Object.values(mem[store]).filter((r) => (lower == null ? true : upper != null ? r[path] >= lower && r[path] <= upper : r[path] === lower)));
+        }
+        return withTx(store, 'readonly', (s) => {
+          const range = lower != null && upper != null ? IDBKeyRange.bound(lower, upper) : lower != null ? IDBKeyRange.only(lower) : null;
+          return promisify(s.index(index).getAll(range));
+        });
+      },
 
       // ---- settings helpers (key/value) ----
       getSetting: async (key, fallback) => { const r = await FinanceDB.get('settings', key); return r ? r.value : fallback; },
-      setSetting: (key, value) => withTx('settings', 'readwrite', (s) => { s.put({ key, value }); }),
+      setSetting: async (key, value) => {
+        const rec = { key, value: key === 'categoryRules' ? cleanValue(value) : value };
+        if (await local()) { mem.settings[key] = copy(rec); lsSave(); return; }
+        return withTx('settings', 'readwrite', (s) => { s.put(rec); });
+      },
 
       // ---- backup / restore ----
       async exportAll() {
         const data = { app: 'centric-wealth', version: DB_VERSION, exportedAt: new Date().toISOString(), stores: {} };
         for (const name of FinanceDB.STORES) data.stores[name] = await FinanceDB.getAll(name);
+        data.stores.settings = data.stores.settings.filter((s) => !DEVICE_ONLY_SETTINGS.includes(s.key));
         return data;
       },
+      /** Validates first (see validateBackup); replace = clear the stores the backup contains before writing. */
       async importAll(data, { replace = false } = {}) {
-        if (!data || !data.stores) throw new Error('Not a Centric Wealth backup file.');
-        const names = FinanceDB.STORES.filter((n) => Array.isArray(data.stores[n]));
-        await withTx(names, 'readwrite', (stores) => {
+        const { stores } = validateBackup(data);
+        const names = Object.keys(stores);
+        if (await local()) {
+          const before = copy(mem);
           for (const n of names) {
-            if (replace) stores[n].clear();
-            data.stores[n].forEach((rec) => stores[n].put(rec));
+            if (replace) for (const k of Object.keys(mem[n])) if (!(n === 'settings' && DEVICE_ONLY_SETTINGS.includes(k))) delete mem[n][k];
+            stores[n].forEach((rec) => { mem[n][keyOf(n, rec)] = rec; });
           }
-        });
-        return names.reduce((sum, n) => sum + data.stores[n].length, 0);
+          try { lsSave(); } catch (e) { mem = before; throw e; }
+        } else {
+          const keep = replace && names.includes('settings') ? (await FinanceDB.getAll('settings')).filter((s) => DEVICE_ONLY_SETTINGS.includes(s.key)) : [];
+          await withTx(names, 'readwrite', (st) => {
+            for (const n of names) {
+              if (replace) st[n].clear();
+              stores[n].forEach((rec) => st[n].put(rec));
+            }
+            keep.forEach((rec) => st.settings.put(rec));
+          });
+        }
+        return names.reduce((sum, n) => sum + stores[n].length, 0);
       },
+      /** Empties every store (keeps the database itself). */
       async wipe() {
+        if (await local()) { mem = emptyMem(); lsSave(); return; }
         await withTx(FinanceDB.STORES, 'readwrite', (stores) => { Object.values(stores).forEach((s) => s.clear()); });
+      },
+      /**
+       * Removes everything this app keeps on the device: the IndexedDB database, the localStorage fallback copy and
+       * the app's local/session storage keys. Resolves to 'deleted', or 'cleared' if another open tab kept the
+       * database from being deleted (its contents are emptied instead).
+       */
+      async destroy() {
+        try { for (const k of Object.keys(localStorage)) if (k.startsWith('cw.')) localStorage.removeItem(k); } catch (_) {}
+        try { for (const k of Object.keys(sessionStorage)) if (k.startsWith('cw.')) sessionStorage.removeItem(k); } catch (_) {}
+        if (backend !== 'indexeddb') { mem = emptyMem(); }
+        if (!window.indexedDB) return 'deleted';
+        const db = dbPromise ? await dbPromise.catch(() => null) : null;
+        const finish = () => new Promise((resolve) => {
+          let done = false;
+          const req = indexedDB.deleteDatabase(DB_NAME);
+          req.onsuccess = () => { done = true; resolve('deleted'); };
+          req.onerror = () => { done = true; resolve('failed'); };
+          setTimeout(() => { if (!done) resolve('blocked'); }, 4000);
+        });
+        if (backend === 'indexeddb' && db) {
+          await withTx(FinanceDB.STORES, 'readwrite', (stores) => { Object.values(stores).forEach((s) => s.clear()); }).catch(() => {});
+          db.close();
+        }
+        dbPromise = null; readyPromise = null;
+        const r = await finish();
+        return r === 'deleted' ? 'deleted' : 'cleared';
       },
     };
 
     window.FinanceDB = FinanceDB;
   })();
+
+  /* =====================================================================
+     SecureVault — WebCrypto helpers: encrypted backups, PIN hashing, device unlock (WebAuthn, checked locally).
+     Nothing here talks to a server.
+     ===================================================================== */
+  (function () {
+    'use strict';
+    const enc = new TextEncoder(), dec = new TextDecoder();
+    const b64 = (buf) => { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
+    const unb64 = (s) => Uint8Array.from(atob(String(s)), (c) => c.charCodeAt(0));
+    const b64url = (buf) => b64(buf).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const rand = (n) => crypto.getRandomValues(new Uint8Array(n));
+    const sameBytes = (a, b) => { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i]; return d === 0; };
+    const subtle = () => { if (!window.crypto || !crypto.subtle) throw new Error('Encryption needs a secure (https) page.'); return crypto.subtle; };
+    const AAD = enc.encode('centric-wealth-backup-v1');
+    const BACKUP_ITERATIONS = 600000, PIN_ITERATIONS = 310000;
+
+    async function pbkdf2Key(pass, salt, iterations) {
+      const base = await subtle().importKey('raw', enc.encode(String(pass).normalize('NFKC')), 'PBKDF2', false, ['deriveKey', 'deriveBits']);
+      return { base, salt, iterations };
+    }
+    async function aesKey(pass, salt, iterations, usage) {
+      const { base } = await pbkdf2Key(pass, salt, iterations);
+      return subtle().deriveKey({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, usage);
+    }
+    const isEncryptedBackup = (o) => !!o && o.app === 'centric-wealth' && o.format === 'encrypted-backup';
+
+    /** AES-256-GCM, key from the passphrase with PBKDF2-SHA-256 (600,000 rounds, random salt). */
+    async function encryptBackup(obj, passphrase) {
+      if (String(passphrase || '').length < 8) throw new Error('Use a passphrase of at least 8 characters.');
+      const salt = rand(16), iv = rand(12);
+      const key = await aesKey(passphrase, salt, BACKUP_ITERATIONS, ['encrypt']);
+      const ct = await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: AAD }, key, enc.encode(JSON.stringify(obj)));
+      return { app: 'centric-wealth', format: 'encrypted-backup', v: 1, exportedAt: new Date().toISOString(),
+        kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: BACKUP_ITERATIONS, salt: b64(salt) }, cipher: { name: 'AES-GCM', iv: b64(iv) }, data: b64(ct) };
+    }
+    async function decryptBackup(file, passphrase) {
+      if (!isEncryptedBackup(file) || file.v !== 1 || !file.kdf || !file.cipher || typeof file.data !== 'string') throw new Error('Not an encrypted Centric Wealth backup.');
+      const it = Number(file.kdf.iterations);
+      if (file.kdf.name !== 'PBKDF2' || file.kdf.hash !== 'SHA-256' || file.cipher.name !== 'AES-GCM' || !(it >= 100000 && it <= 5000000)) throw new Error('This backup uses settings this app does not accept.');
+      let plain;
+      try {
+        const key = await aesKey(passphrase, unb64(file.kdf.salt), it, ['decrypt']);
+        plain = await subtle().decrypt({ name: 'AES-GCM', iv: unb64(file.cipher.iv), additionalData: AAD }, key, unb64(file.data));
+      } catch (_) { throw new Error('Wrong passphrase, or the file is damaged.'); }
+      return JSON.parse(dec.decode(plain));
+    }
+
+    /** PIN -> { salt, iterations, hash } (PBKDF2-SHA-256). Only the hash is stored. */
+    async function hashPin(pin, saltB64, iterations = PIN_ITERATIONS) {
+      const salt = saltB64 ? unb64(saltB64) : rand(16);
+      const { base } = await pbkdf2Key(pin, salt, iterations);
+      const bits = await subtle().deriveBits({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, base, 256);
+      return { salt: b64(salt), iterations, hash: b64(bits) };
+    }
+    async function checkPin(pin, lock) {
+      if (!lock || !lock.hash) return false;
+      const h = await hashPin(pin, lock.salt, lock.iterations);
+      return sameBytes(unb64(h.hash), unb64(lock.hash));
+    }
+
+    /* ---- device unlock: a passkey kept by the phone's own Face ID / fingerprint / screen lock ----
+       There is no server, so the app checks the answer itself: right challenge, right origin and site,
+       user verified, and (where the browser exposes the public key) a valid signature. */
+    async function deviceUnlockAvailable() {
+      try { return !!(window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); }
+      catch (_) { return false; }
+    }
+    async function registerDevice() {
+      const cred = await navigator.credentials.create({ publicKey: {
+        challenge: rand(32), rp: { name: 'Centric Wealth' },
+        user: { id: rand(16), name: 'centric-wealth-lock', displayName: 'Centric Wealth app lock' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+        timeout: 60000, attestation: 'none',
+      } });
+      const r = cred.response;
+      const pk = typeof r.getPublicKey === 'function' ? r.getPublicKey() : null;
+      const alg = typeof r.getPublicKeyAlgorithm === 'function' ? r.getPublicKeyAlgorithm() : null;
+      return { id: b64(cred.rawId), publicKey: pk ? b64(pk) : null, alg };
+    }
+    function derToRaw(der) { // ECDSA signature: DER SEQUENCE(INTEGER r, INTEGER s) -> 64-byte r||s
+      let i = 2; if (der[1] & 0x80) i = 2 + (der[1] & 0x7f);
+      const part = () => { if (der[i++] !== 0x02) throw new Error('bad signature'); const len = der[i++]; let v = der.slice(i, i + len); i += len; while (v.length > 32 && v[0] === 0) v = v.slice(1); const out = new Uint8Array(32); out.set(v, 32 - v.length); return out; };
+      const r = part(), s = part(); const raw = new Uint8Array(64); raw.set(r, 0); raw.set(s, 32); return raw;
+    }
+    async function verifyDevice(saved) {
+      if (!saved || !saved.id) throw new Error('Device unlock is not set up.');
+      const challenge = rand(32);
+      const a = await navigator.credentials.get({ publicKey: { challenge, allowCredentials: [{ type: 'public-key', id: unb64(saved.id) }], userVerification: 'required', timeout: 60000 } });
+      const r = a.response;
+      const client = JSON.parse(dec.decode(r.clientDataJSON));
+      if (client.type !== 'webauthn.get' || client.challenge !== b64url(challenge) || client.origin !== location.origin) throw new Error('Device check failed.');
+      const ad = new Uint8Array(r.authenticatorData);
+      const rpHash = new Uint8Array(await subtle().digest('SHA-256', enc.encode(location.hostname)));
+      if (!sameBytes(ad.slice(0, 32), rpHash) || !(ad[32] & 0x01) || !(ad[32] & 0x04)) throw new Error('Device check failed.');
+      if (saved.publicKey) {
+        const signed = new Uint8Array(ad.length + 32); signed.set(ad, 0); signed.set(new Uint8Array(await subtle().digest('SHA-256', r.clientDataJSON)), ad.length);
+        const sig = new Uint8Array(r.signature); let ok;
+        if (saved.alg === -257) { const k = await subtle().importKey('spki', unb64(saved.publicKey), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']); ok = await subtle().verify('RSASSA-PKCS1-v1_5', k, sig, signed); }
+        else { const k = await subtle().importKey('spki', unb64(saved.publicKey), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']); ok = await subtle().verify({ name: 'ECDSA', hash: 'SHA-256' }, k, derToRaw(sig), signed); }
+        if (!ok) throw new Error('Device check failed.');
+      }
+      return true;
+    }
+
+    window.SecureVault = { encryptBackup, decryptBackup, isEncryptedBackup, hashPin, checkPin, deviceUnlockAvailable, registerDevice, verifyDevice };
+  })();
+  // Counts requests the Content-Security-Policy refused this session (shown in Settings as the network guard).
+  window.CWNetworkGuard = { blocked: 0, last: null };
+  document.addEventListener('securitypolicyviolation', (e) => { window.CWNetworkGuard.blocked++; window.CWNetworkGuard.last = e.blockedURI || e.violatedDirective; });
   </script>
 
   <!-- Monthly report builder + client-side download (see monthly-report.js) -->
-  <script src="./monthly-report.js?v=1.18.0"></script>
+  <script src="./monthly-report.js?v=1.19.0"></script>
   <!-- Recurring subscriptions/bills detection + local reminders (see recurring-scanner.js) -->
   <!-- PDF/CSV statement parsing for the Upload tab (see statement-parser.js) -->
-  <script src="./statement-parser.js?v=1.18.0"></script>
-  <script src="./recurring-scanner.js?v=1.18.0"></script>
+  <script src="./statement-parser.js?v=1.19.0"></script>
+  <script src="./recurring-scanner.js?v=1.19.0"></script>
   <!-- Financial health score, 50/30/20 and debt payoff maths (see advisor-engine.js) -->
-  <script src="./advisor-engine.js?v=1.18.0"></script>
+  <script src="./advisor-engine.js?v=1.19.0"></script>
   <!-- Analytics calculations + Chart.js configs; savings funds (see analytics-engine.js) -->
-  <script src="./analytics-engine.js?v=1.18.0"></script>
+  <script src="./analytics-engine.js?v=1.19.0"></script>
 
   <!-- =====================================================================
        React app (JSX compiled in-browser by Babel Standalone)
@@ -587,7 +858,7 @@
   }
 
   // Bottom sheet: springs up, slides down on close, can be dragged down by its handle to dismiss.
-  function Sheet({ open, title, onClose, children }) {
+  function Sheet({ open, title, onClose, children, container, z = 'z-50' }) {
     const [mounted, setMounted] = useState(open), [closing, setClosing] = useState(false);
     const cached = useRef(children), panel = useRef(), drag = useRef(null);
     if (open) cached.current = children;
@@ -617,7 +888,7 @@
     if (!mounted) return null;
     // Portalled to <body> so a glass card (backdrop-filter) or an animating parent can't trap the fixed overlay.
     return ReactDOM.createPortal(
-      <div className="fixed inset-0 z-50 flex items-end justify-center" role="dialog" aria-modal="true" aria-label={title}>
+      <div className={cls('fixed inset-0 flex items-end justify-center', z)} role="dialog" aria-modal="true" aria-label={title}>
         <div className={cls('absolute inset-0 bg-slate-950/50 backdrop-blur-md', closing ? 'backdrop-out' : 'backdrop-in')} onClick={onClose} />
         <div ref={panel} className={cls('glass-sheet relative w-full max-w-lg max-h-[92vh] overflow-y-auto overscroll-contain rounded-t-[32px] border-t border-white/70 dark:border-white/[.12] pb-safe', closing ? 'sheet-out' : 'sheet-in')}>
           <div className="sticky top-0 z-10 px-5 pt-2.5 pb-3 bg-[var(--sheet)] border-b border-[color:var(--divider)]">
@@ -632,7 +903,7 @@
           <div className="px-5 py-4">{open ? children : cached.current}</div>
         </div>
       </div>,
-      document.body
+      container || document.body
     );
   }
 
@@ -767,6 +1038,7 @@
   }
 
   function FluidHero({ s }) {
+    const { fmt } = useApp();
     const wrap = useRef(), canvas = useRef(), netRef = useRef();
     const [w, setW] = useState(0);
     useEffect(() => {
@@ -943,7 +1215,7 @@
           <AnimatedMoney value={s.cardOwed} className="text-[17px] font-extrabold tracking-tight text-white" /><span className="text-xs font-semibold text-rose-300">Cards</span></p>}
         {L.hasWell && <div data-testid="fluid-well" className="absolute z-[2] flex items-baseline gap-1.5 whitespace-nowrap" style={{ left: L.well.x + 16, top: L.well.y + 10 }}>
           <AnimatedMoney value={s.savings} className="text-[15px] font-extrabold tracking-tight text-white" /><span className="text-[11px] font-semibold text-cyan-300 inline-flex items-center gap-1"><Icon name="PiggyBank" size={12} />Savings funds</span></div>}
-        <p className="sr-only">Bank {s.bankBalance.toFixed(2)}, credit cards owed {s.cardOwed.toFixed(2)}{s.savings > 0 ? `, plus ${s.savings.toFixed(2)} in savings funds` : ''}.</p>
+        <p className="sr-only">Bank {fmt(s.bankBalance)}, credit cards owed {fmt(s.cardOwed)}{s.savings > 0 ? `, plus ${fmt(s.savings)} in savings funds` : ''}.</p>
       </section>
     );
   }
@@ -964,9 +1236,12 @@
             <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{monthLabel(s.mk)}</p>
             <h1 className="text-[30px] leading-9 font-extrabold tracking-[-0.03em]">{view === 'analytics' ? 'Analytics' : 'Overview'}</h1>
           </div>
-          <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-full bg-emerald-500/10 text-emerald-700 ring-1 ring-inset ring-emerald-500/20 dark:text-emerald-300 dark:bg-emerald-400/10 dark:ring-emerald-400/20 dark:shadow-[0_0_18px_-4px_rgba(16,185,129,.6)]">
-            <Icon name="ShieldCheck" size={14} /> On-device
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1.5 rounded-full bg-emerald-500/10 text-emerald-700 ring-1 ring-inset ring-emerald-500/20 dark:text-emerald-300 dark:bg-emerald-400/10 dark:ring-emerald-400/20 dark:shadow-[0_0_18px_-4px_rgba(16,185,129,.6)]">
+              <Icon name="ShieldCheck" size={14} /> On-device
+            </span>
+            <HeaderTools />
+          </div>
         </header>
         <div className="mt-3"><Segmented value={view} onChange={pickView} options={[{ value: 'overview', label: 'Overview' }, { value: 'analytics', label: 'Analytics' }]} /></div>
         {view === 'analytics' ? <AnalyticsView /> : <>
@@ -1358,7 +1633,7 @@
       <div>
         <header className="flex items-center justify-between pt-2">
           <h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Transactions</h1>
-          <Button className="!h-10 !px-3" onClick={() => setEditing('new')} aria-label="Add transaction"><Icon name="Plus" size={18} />Add</Button>
+          <div className="flex items-center gap-1.5"><HeaderTools /><Button className="!h-10 !px-3" onClick={() => setEditing('new')} aria-label="Add transaction"><Icon name="Plus" size={18} />Add</Button></div>
         </header>
 
         <div className="flex items-center justify-between mt-4">
@@ -1555,6 +1830,7 @@
     const [subtype, setSubtype] = useState('Checking');
     const [job, setJob] = useState(null);       // { file, report } | { file, error }
     const [password, setPassword] = useState('');
+    const [restoreFile, setRestoreFile] = useState(null); // a backup (.json) dropped here opens the restore flow
     const [balance, setBalance] = useState('');
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState(null);
@@ -1661,15 +1937,7 @@
 
     const handleFile = async (file) => {
       if (!file) return;
-      if (file.name.toLowerCase().endsWith('.json')) {
-        try {
-          const json = JSON.parse(await file.text());
-          const replace = confirm('Restore backup?\n\nOK = replace all current data\nCancel = merge into current data');
-          const n = await DB.importAll(json, { replace });
-          await reload(); toast(`Restored ${n} records`);
-        } catch (e) { toast(e.message, 'error'); }
-        return;
-      }
+      if (file.name.toLowerCase().endsWith('.json')) { setRestoreFile(file); return; }
       setPassword(''); parse(file);
     };
 
@@ -1681,7 +1949,7 @@
       const seen = new Map();
       const rows = job.report.transactions.map((t) => {
         const b = StatementParser.hashTx(t.date, Math.abs(t.amount), t.description); const n = (seen.get(b) || 0) + 1; seen.set(b, n);
-        return { ...t, ...StatementParser.classify(t, kind), direction: t.amount < 0 ? 'out' : 'in', amount: Math.abs(t.amount), accountType: kind, accountName, dup: n <= (have.get(b) || 0) };
+        return { ...t, description: DB.cleanText(t.description), ...StatementParser.classify(t, kind), direction: t.amount < 0 ? 'out' : 'in', amount: Math.abs(t.amount), accountType: kind, accountName, dup: n <= (have.get(b) || 0) };
       });
       const fresh = rows.filter((r) => !r.dup);
       const tally = (f) => { const l = fresh.filter(f); return { n: l.length, total: l.reduce((s, r) => s + r.amount, 0) }; };
@@ -1713,7 +1981,7 @@
     return (
       <div>
         <header className="pt-2">
-          <h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Upload</h1>
+          <div className="flex items-center justify-between gap-2"><h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Upload</h1><HeaderTools /></div>
           <p className="text-sm text-slate-500 mt-1">PDF or CSV statements, read on this device and never uploaded anywhere.</p>
         </header>
 
@@ -1804,6 +2072,7 @@
           </div>
         )}
 
+        <Sheet open={!!restoreFile} title="Restore a backup" onClose={() => setRestoreFile(null)}>{restoreFile && <RestoreFlow file={restoreFile} onDone={() => setRestoreFile(null)} />}</Sheet>
         {batch && <div className="panel-up"><BatchList batch={batch} view={batchView} done={batchDone} busy={busy} updateItem={updateItem} setItemKind={setItemKind}
           onRemove={(id) => setBatch((b) => { const n = b.filter((it) => it.id !== id); return n.length ? n : null; })}
           onClear={() => { setBatch(null); setBatchDone(null); }} onImport={importAll} /></div>}
@@ -1877,7 +2146,7 @@
   }
 
   function DebtTab() {
-    const { data, save, remove, fmt, toast, openCards } = useApp();
+    const { data, save, remove, fmt, toast, openCards, privacy } = useApp();
     const cardInfo = useCards();
     const [edit, setEdit] = useState(null);
     const [pay, setPay] = useState(null);
@@ -1925,7 +2194,7 @@
               <div key={d.id} className="flex items-center gap-3 p-3.5">
                 <button className="press flex-1 min-w-0 text-left flex items-center gap-3" onClick={() => (isCardDebt(d) ? openCards({ edit: d.id }) : setEdit({ ...d, balance: String(d.balance), apr: String(d.apr), minPayment: String(d.minPayment) }))}>
                   {isCardDebt(d) ? <CardChip c={d} size="sm" /> : <div className="w-10 h-10 rounded-xl grid place-items-center bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400"><Icon name="Landmark" size={18} /></div>}
-                  <div className="min-w-0"><p className="font-medium truncate">{d.name}{d.last4 && <span className="num text-slate-400 font-medium"> ••{d.last4}</span>}</p>
+                  <div className="min-w-0"><p className="font-medium truncate">{d.name}{d.last4 && <span className="num text-slate-400 font-medium"> ••{mask4(privacy, d.last4)}</span>}</p>
                     {(() => { const ci = cardInfo.find((c) => c.id === d.id); return ci && ci.status.set && <div className="my-0.5"><DueBadge st={ci.status} /></div>; })()}<p className="num text-xs text-slate-500">{Number(d.apr) > 0 ? `${d.apr}% APR` : <span className="text-amber-600">APR not set</span>} · min {fmt(d.minPayment)}</p>{d.ledger && <p className="text-[11px] text-slate-400">{balanceNote(d)}</p>}</div>
                 </button>
                 <div className="text-right"><p className="num font-semibold">{fmt(d.balance)}</p><button className="press text-xs font-semibold text-brand-700 dark:text-brand-400" onClick={() => setPay({ id: d.id, name: d.name, amount: String(d.minPayment || '') })}>Log payment</button></div>
@@ -2094,7 +2363,7 @@
   function BudgetDebt({ sub, setSub }) {
     return (
       <div>
-        <header className="pt-2"><h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Budget & Debt</h1></header>
+        <header className="pt-2 flex items-center justify-between gap-2"><h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Budget & Debt</h1><HeaderTools /></header>
         <div className="mt-4"><Segmented value={sub} onChange={setSub} options={[{ value: 'budget', label: 'Budget' }, { value: 'debt', label: 'Debt' }, { value: 'bills', label: 'Bills' }, { value: 'assets', label: 'Assets' }]} /></div>
         {sub === 'budget' && <BudgetTab />}
         {sub === 'debt' && <DebtTab />}
@@ -2148,7 +2417,7 @@
     return (
       <div>
         <header className="pt-2">
-          <h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Budget & Health Advisor</h1>
+          <div className="flex items-start justify-between gap-2"><h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Budget & Health Advisor</h1><HeaderTools /></div>
           <p className="text-sm text-slate-500 mt-0.5">{periodLabel}</p>
         </header>
 
@@ -2401,7 +2670,7 @@
       const cfg = build(Analytics.theme(mode), fmt);
       if (chart.current && chart.current.config.type === cfg.type && chart.current._cwMode === mode) { chart.current.data = cfg.data; chart.current.options = cfg.options; chart.current.update(); }
       else { if (chart.current) chart.current.destroy(); chart.current = new window.Chart(ref.current, cfg); chart.current._cwMode = mode; }
-    }, [st, mode, dataKey]);
+    }, [st, mode, dataKey, fmt]);
     useEffect(() => () => { if (chart.current) chart.current.destroy(); }, []);
     return (
       <div className="relative" style={{ height }}>
@@ -2670,11 +2939,12 @@
   }
   const DueBadge = ({ st }) => { const b = DUE_BADGE[st.level]; return <span data-level={st.level} className={cls('inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full whitespace-nowrap shrink-0', b.cls)}><Icon name={b.icon} size={12} strokeWidth={2.5} />{dueText(st)}</span>; };
   const CardChip = ({ c, size = 'md' }) => {
+    const { privacy } = useApp();
     const [a, b] = CARD_COLORS[(Number(c.color) || 0) % CARD_COLORS.length];
     return (
       <div className={cls('relative shrink-0 rounded-[8px] overflow-hidden text-white shadow-[0_6px_14px_-8px_rgba(14,27,44,.8)]', size === 'md' ? 'w-12 h-8' : 'w-10 h-7')} style={{ background: `linear-gradient(135deg, ${a}, ${b})` }} aria-hidden="true">
         <span className="absolute left-1.5 top-1.5 w-2.5 h-2 rounded-[2px] bg-amber-200/80" />
-        <span className="num absolute right-1 bottom-0.5 text-[8px] font-bold tracking-wide opacity-90">{c.last4 || ''}</span>
+        <span className="num absolute right-1 bottom-0.5 text-[8px] font-bold tracking-wide opacity-90">{mask4(privacy, c.last4) || ''}</span>
       </div>
     );
   };
@@ -2695,7 +2965,7 @@
     );
   }
   function CardDueRow({ c }) {
-    const { fmt, openCards, markCardPaid } = useApp();
+    const { fmt, openCards, markCardPaid, privacy } = useApp();
     const st = c.status, actionable = ['overdue', 'urgent', 'soon'].includes(st.level);
     return (
       <div className="p-3.5" data-card={c.name}>
@@ -2703,7 +2973,7 @@
           <button className="press flex-1 min-w-0 flex items-start gap-3 text-left" onClick={() => openCards({ edit: c.id })} aria-label={`Edit ${c.name}`}>
             <CardChip c={c} />
             <div className="min-w-0 flex-1">
-              <p className="font-semibold truncate leading-tight">{c.name}{c.last4 && <span className="num text-slate-400 font-medium"> ••{c.last4}</span>}</p>
+              <p className="font-semibold truncate leading-tight">{c.name}{c.last4 && <span className="num text-slate-400 font-medium"> ••{mask4(privacy, c.last4)}</span>}</p>
               <p className="num text-xs text-slate-500 mt-0.5"><span className="font-semibold text-slate-700 dark:text-slate-200">{fmt(c.balance)}</span>{c.limit ? ` of ${fmt(c.limit, true)}` : ' owed'}</p>
             </div>
           </button>
@@ -2824,7 +3094,7 @@
 
   // "Manage credit cards": list -> add / edit. state: {} (list) | { edit: id | 'new', fromList }
   function ManageCardsSheet({ state, setState }) {
-    const { fmt } = useApp();
+    const { fmt, privacy } = useApp();
     const cards = useCards();
     const editing = state && state.edit && state.edit !== 'new' ? cards.find((c) => c.id === state.edit) : null;
     const title = !state ? 'Credit cards' : state.edit === 'new' ? 'Add credit card' : editing ? `Edit ${editing.name}` : 'Manage credit cards';
@@ -2845,7 +3115,7 @@
                   <button key={c.id} type="button" onClick={() => setState({ edit: c.id, fromList: true })} className="press w-full flex items-center gap-3 p-3.5 text-left">
                     <CardChip c={c} />
                     <div className="min-w-0 flex-1">
-                      <p className="font-semibold truncate">{c.name}{c.last4 && <span className="num text-slate-400 font-medium"> ••{c.last4}</span>}</p>
+                      <p className="font-semibold truncate">{c.name}{c.last4 && <span className="num text-slate-400 font-medium"> ••{mask4(privacy, c.last4)}</span>}</p>
                       <p className="num text-xs text-slate-500">{c.dueDay ? `Due on the ${ordinal(c.dueDay)}` : 'No due date'}{c.limit ? ` · limit ${fmt(c.limit, true)}` : ''}</p>
                     </div>
                     <Icon name="ChevronRight" size={18} className="text-slate-400" />
@@ -3213,7 +3483,8 @@
 
   /* ====================================================== MONTHLY REPORT */
   // Small Markdown renderer for the report preview: headings, tables, **bold**, _italic_.
-  function inlineMd(s) { return s.split(/(\*\*[^*]+\*\*|_[^_]+_)/g).map((p, i) => p.startsWith('**') ? <b key={i}>{p.slice(2, -2)}</b> : /^_[^_]+_$/.test(p) ? <i key={i}>{p.slice(1, -1)}</i> : p); }
+  const unMd = (t) => t.replace(/\\([\\|<>\[\]`*_])/g, '$1');
+  function inlineMd(s) { return s.split(/(\*\*[^*]+\*\*|(?<!\\)_[^_]+(?<!\\)_)/g).map((p, i) => p.startsWith('**') ? <b key={i}>{unMd(p.slice(2, -2))}</b> : /^_[^_]+_$/.test(p) && !p.includes('\\_') ? <i key={i}>{unMd(p.slice(1, -1))}</i> : unMd(p)); }
   function MarkdownView({ text }) {
     const lines = String(text).split('\n'); const out = [];
     for (let i = 0; i < lines.length; i++) {
@@ -3340,8 +3611,21 @@
   }
 
   function SettingsView() {
-    const { data, setSetting, reload, toast, loadSample, installPrompt, install, openCards } = useApp();
+    const { data, setSetting, reload, toast, loadSample, installPrompt, install, openCards, privacy, setPrivacy, lockNow } = useApp();
     const [rulesOpen, setRulesOpen] = useState(false);
+    const [sheet, setSheet] = useState(null); // 'backup' | 'restore' | 'wipe' | 'pin-set' | 'pin-change' | 'pin-off'
+    const [restoreFile, setRestoreFile] = useState(null);
+    const restoreInput = useRef();
+    const lock = data.settings.lock && data.settings.lock.enabled ? data.settings.lock : null;
+    const [deviceOk, setDeviceOk] = useState(false);
+    useEffect(() => { SecureVault.deviceUnlockAvailable().then(setDeviceOk); }, []);
+    const setLock = (patch) => setSetting('lock', { ...lock, ...patch });
+    const toggleDevice = async () => {
+      if (lock.device) { await setLock({ device: null }); toast('Face ID / fingerprint unlock removed'); return; }
+      try { const device = await SecureVault.registerDevice(); await setLock({ device }); toast('Face ID / fingerprint unlock is on'); }
+      catch (e) { toast(e && e.name === 'NotAllowedError' ? 'Device unlock was cancelled' : (e && e.message) || 'Could not set up device unlock', 'error'); }
+    };
+    const sheetTitle = { backup: 'Back up your data', restore: 'Restore a backup', wipe: 'Erase all data', 'pin-set': 'Set an app PIN', 'pin-change': 'Change PIN', 'pin-off': 'Turn off app lock' };
     const st = data.settings;
     const [storage, setStorage] = useState(null);
     useEffect(() => {
@@ -3349,7 +3633,7 @@
         if (!navigator.storage) return;
         const est = navigator.storage.estimate ? await navigator.storage.estimate() : {};
         const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
-        setStorage({ used: est.usage || 0, persisted });
+        setStorage({ used: est.usage || 0, persisted, backend: DB.backend });
       })();
     }, [data]);
 
@@ -3362,11 +3646,11 @@
     );
     const smallSelect = 'h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-sm';
 
-    const exportJSON = async () => { download(`centric-wealth-backup-${todayISO()}.json`, JSON.stringify(await DB.exportAll(), null, 2), 'application/json'); setSetting('lastBackup', todayISO()); };
     const exportCSV = () => {
-      const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      // Quote every cell; text that a spreadsheet would run as a formula (=, +, -, @) gets a leading apostrophe.
+      const esc = (v, i) => { let x = String(v ?? ''); if (i !== 4 && /^[=+\-@\t\r]/.test(x)) x = "'" + x; return `"${x.replace(/"/g, '""')}"`; };
       const rows = [['Date', 'Type', 'Category', 'Description', 'Amount', 'Account', 'Account type'], ...[...data.transactions].sort((a, b) => a.date.localeCompare(b.date)).map((t) => [t.date, t.type, t.category, t.description, (isMoneyIn(t) ? t.amount : -t.amount).toFixed(2), t.accountName || '', acctTypeOf(t) || ''])];
-      download(`centric-wealth-transactions-${todayISO()}.csv`, rows.map((r) => r.map(esc).join(',')).join('\n'), 'text/csv');
+      download(`centric-wealth-transactions-${todayISO()}.csv`, rows.map((r) => r.map((c, i) => esc(c, i)).join(',')).join('\n'), 'text/csv');
     };
     const [notifyStatus, setNotifyStatus] = useState(null);
     useEffect(() => { RecurringScanner.notifications.status().then(setNotifyStatus); }, [st.notify]);
@@ -3380,16 +3664,15 @@
       RecurringScanner.notifications.status().then(setNotifyStatus);
     };
     const persist = async () => { const ok = navigator.storage?.persist ? await navigator.storage.persist() : false; toast(ok ? 'Storage protected from eviction' : 'Browser declined — install the app and try again', ok ? 'ok' : 'error'); setStorage((s) => ({ ...s, persisted: ok })); };
-    const wipe = async () => { if (prompt('Type DELETE to erase all data on this device.') === 'DELETE') { await DB.wipe(); await reload(); toast('All data erased'); } };
     const count = data.transactions.length + data.debts.length + data.bills.length + data.accounts.length + data.budgets.length;
 
     return (
       <div>
-        <header className="pt-2"><h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Settings</h1></header>
+        <header className="pt-2 flex items-center justify-between gap-2"><h1 className="text-[28px] leading-9 font-extrabold tracking-tight">Settings</h1><HeaderTools /></header>
 
         <Card className="mt-4 p-4 flex gap-3 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20">
           <Icon name="ShieldCheck" size={22} className="text-emerald-600 shrink-0" />
-          <p className="text-sm text-emerald-900 dark:text-emerald-200">No accounts, servers, analytics or API keys. Your {count} records live only in this browser’s IndexedDB. Back up regularly.</p>
+          <p className="text-sm text-emerald-900 dark:text-emerald-200">No accounts, servers, analytics or API keys. Your {count} records live only in this browser{DB.backend === 'indexeddb' ? '’s IndexedDB' : DB.backend === 'localstorage' ? '’s local storage' : ''}, are saved as you go and are there again after a refresh. Back up regularly.</p>
         </Card>
 
         <SectionTitle>Preferences</SectionTitle>
@@ -3419,17 +3702,48 @@
           </Row>
         </Card>
 
+        <SectionTitle>Privacy & security</SectionTitle>
+        <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
+          <Row icon={privacy ? 'EyeOff' : 'Eye'} label="Privacy mode" sub="Hide amounts and card digits (also the eye in every header)"><SwitchBtn on={privacy} onClick={() => setPrivacy(!privacy)} label="Privacy mode" /></Row>
+          <Row icon="LockKeyhole" label="App lock" sub={lock ? `PIN${lock.device ? ' or Face ID / fingerprint' : ''} needed to open the app` : 'Ask for a PIN when the app opens'}>
+            <SwitchBtn on={!!lock} onClick={() => setSheet(lock ? 'pin-off' : 'pin-set')} label="App lock" />
+          </Row>
+          {lock && <>
+            <Row icon="Timer" label="Lock after no use">
+              <select className={smallSelect} value={lock.minutes ?? 2} onChange={(e) => setLock({ minutes: Number(e.target.value) })} aria-label="Lock after no use">
+                {[[1, '1 minute'], [2, '2 minutes'], [5, '5 minutes'], [15, '15 minutes'], [0, 'Never']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </Row>
+            <Row icon="AppWindow" label="Lock when I leave the app" sub="Switching apps or tabs, or turning off the screen"><SwitchBtn on={lock.onHide !== false} onClick={() => setLock({ onHide: lock.onHide === false })} label="Lock when I leave the app" /></Row>
+            {(deviceOk || lock.device) && <Row icon="Fingerprint" label="Face ID / fingerprint" sub="Uses this device's own screen lock; nothing leaves the device"><SwitchBtn on={!!lock.device} onClick={toggleDevice} label="Face ID / fingerprint unlock" /></Row>}
+            <Row icon="KeyRound" label="Change PIN" onClick={() => setSheet('pin-change')}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
+            <Row icon="Lock" label="Lock now" onClick={lockNow}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
+          </>}
+          <Row icon="ShieldCheck" label="Network guard" sub={`Only this app's files and its pinned libraries may load; anything else is refused by the browser. Blocked this session: ${(window.CWNetworkGuard || {}).blocked || 0}`} />
+        </Card>
+        <p className="text-xs text-slate-500 mt-2 px-1">The app lock hides the app on this device. The data in browser storage itself isn't encrypted, so use an encrypted backup for any copy that leaves the device.</p>
+
         <SectionTitle>Your data</SectionTitle>
         <Card className="divide-y divide-slate-900/[.05] dark:divide-white/[.06]">
-          <Row icon="Download" label="Back up (JSON)" sub={st.lastBackup ? `Last backup ${prettyDate(st.lastBackup)}` : 'Never backed up'} onClick={exportJSON}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
+          <Row icon="Download" label="Back up" sub={st.lastBackup ? `Encrypted or plain JSON · last backup ${prettyDate(st.lastBackup)}` : 'Encrypted or plain JSON · never backed up'} onClick={() => setSheet('backup')}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
+          <Row icon="Upload" label="Restore from backup" sub="Merge or replace, encrypted backups too" onClick={() => restoreInput.current.click()}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
           <Row icon="FileSpreadsheet" label="Export transactions (CSV)" onClick={exportCSV}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
-          <Row icon="HardDrive" label="Persistent storage" sub={storage ? `${(storage.used / 1024).toFixed(0)} KB used · ${storage.persisted ? 'protected' : 'may be cleared by browser'}` : 'Checking…'} onClick={storage && !storage.persisted ? persist : undefined}>
+          <Row icon="HardDrive" label="Storage on this device" sub={storage ? `${{ indexeddb: 'IndexedDB', localstorage: 'Local storage (IndexedDB blocked)', memory: 'Memory only: data is lost on refresh in this browser mode' }[storage.backend] || 'IndexedDB'} · ${(storage.used / 1024).toFixed(0)} KB used · ${storage.persisted ? 'protected' : 'may be cleared by browser'}` : 'Checking…'} onClick={storage && !storage.persisted ? persist : undefined}>
             {storage && !storage.persisted && <span className="text-xs font-semibold text-brand-700 dark:text-brand-400">Protect</span>}
           </Row>
           {installPrompt && <Row icon="Smartphone" label="Install app" sub="Add to home screen for offline use" onClick={install}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>}
           <Row icon="Sparkles" label="Load sample data" sub="Adds demo records (merge)" onClick={loadSample}><Icon name="ChevronRight" size={18} className="text-slate-400" /></Row>
-          <Row icon="Trash2" label="Erase all data" danger onClick={wipe} />
+          <Row icon="Trash2" label="Erase all data" sub="Two-step confirmation" danger onClick={() => setSheet('wipe')} />
         </Card>
+        <input ref={restoreInput} type="file" accept=".json,application/json" className="hidden" data-testid="restore-input" onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { setRestoreFile(f); setSheet('restore'); } }} />
+        <Sheet open={!!sheet} title={sheetTitle[sheet] || ''} onClose={() => setSheet(null)}>
+          {sheet === 'backup' && <BackupFlow onDone={() => setSheet(null)} />}
+          {sheet === 'restore' && restoreFile && <RestoreFlow file={restoreFile} onDone={() => setSheet(null)} />}
+          {sheet === 'wipe' && <WipeFlow onCancel={() => setSheet(null)} />}
+          {sheet === 'pin-set' && <PinSheetBody mode="set" onDone={() => setSheet(null)} />}
+          {sheet === 'pin-change' && <PinSheetBody mode="change" onDone={() => setSheet(null)} />}
+          {sheet === 'pin-off' && <PinSheetBody mode="off" onDone={() => setSheet(null)} />}
+        </Sheet>
         <p className="text-center text-xs text-slate-400 mt-6" data-testid="app-version">Centric Wealth v{APP_VERSION} · statement reader v{window.StatementParser ? StatementParser.version : '?'}</p>
         <Sheet open={rulesOpen} title="Category rules" onClose={() => setRulesOpen(false)}><CategoryRules /></Sheet>
       </div>
@@ -3484,8 +3798,254 @@
     };
   }
 
+  /* ============================================================ PRIVACY & SECURITY
+     Privacy mode masks every amount (all money goes through fmt) and card digits. The app lock is a PIN
+     (stored only as a PBKDF2 hash) plus optional Face ID / fingerprint, asked for on launch, after a chosen
+     time without use, and when you leave the app. It hides the app on this device; the stored data itself is
+     not encrypted, so files that leave the device should be encrypted backups. */
+  const MASK = '••••••';
+  const mask4 = (privacy, s) => (privacy && s ? '••••' : s);
+  const SwitchBtn = ({ on, onClick, label, disabled }) => (
+    <button type="button" onClick={onClick} disabled={disabled} role="switch" aria-checked={!!on} aria-label={label} className={cls('press w-12 h-7 rounded-full p-0.5 transition-colors duration-300 shrink-0 disabled:opacity-50', on ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-700')}>
+      <span className={cls('block w-6 h-6 rounded-full bg-white shadow transition-transform', on && 'translate-x-5')} />
+    </button>
+  );
+
+  // Eye (hide/show amounts) and, when the app lock is on, "Lock now". Shown in every page header.
+  function HeaderTools() {
+    const { privacy, setPrivacy, lockNow, lockOn } = useApp();
+    const btn = 'press w-9 h-9 grid place-items-center rounded-full bg-slate-900/[.05] dark:bg-white/[.07] ring-1 ring-inset ring-slate-900/[.04] dark:ring-white/[.06] text-slate-600 dark:text-slate-300';
+    return (
+      <div className="flex items-center gap-1.5 shrink-0">
+        <button type="button" onClick={() => setPrivacy(!privacy)} aria-pressed={privacy} aria-label={privacy ? 'Show amounts' : 'Hide amounts'} title={privacy ? 'Show amounts' : 'Hide amounts'} className={cls(btn, privacy && '!bg-brand-500/15 !text-brand-700 dark:!text-brand-300')} data-testid="privacy-toggle">
+          <Icon name={privacy ? 'EyeOff' : 'Eye'} size={17} />
+        </button>
+        {lockOn && <button type="button" onClick={lockNow} aria-label="Lock now" title="Lock now" className={btn}><Icon name="Lock" size={16} /></button>}
+      </div>
+    );
+  }
+
+  // Numeric PIN entry used in Settings (set / change / confirm).
+  function PinField({ label, value, onChange, autoFocus }) {
+    return <Field label={label}><input className={cls(inputCls, 'tracking-[.5em] text-center num')} type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]*" maxLength={8} value={value} autoFocus={autoFocus}
+      onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 8))} /></Field>;
+  }
+
+  /** mode: 'set' (new lock), 'change' (asks current PIN first), 'off' (asks current PIN, then turns the lock off). */
+  function PinSheetBody({ mode, onDone }) {
+    const { data, setSetting, toast } = useApp();
+    const lock = data.settings.lock || {};
+    const [cur, setCur] = useState(''), [p1, setP1] = useState(''), [p2, setP2] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('');
+    const needCur = mode !== 'set';
+    const submit = async (e) => {
+      e.preventDefault(); setErr('');
+      try {
+        setBusy(true);
+        if (needCur && !(await SecureVault.checkPin(cur, lock))) { setErr('That isn’t your current PIN.'); return; }
+        if (mode === 'off') { await setSetting('lock', { enabled: false }); await setSetting('lockFails', { n: 0, until: 0 }); toast('App lock turned off'); onDone(); return; }
+        if (!/^\d{4,8}$/.test(p1)) { setErr('Use 4 to 8 digits.'); return; }
+        if (/^(\d)\1+$/.test(p1) || '0123456789'.includes(p1) || '9876543210'.includes(p1)) { setErr('Pick something harder to guess than repeated or sequential digits.'); return; }
+        if (p1 !== p2) { setErr('The two PINs don’t match.'); return; }
+        const h = await SecureVault.hashPin(p1);
+        await setSetting('lock', { minutes: 2, onHide: true, ...lock, enabled: true, ...h, pinLength: p1.length });
+        await setSetting('lockFails', { n: 0, until: 0 });
+        toast(mode === 'set' ? 'App lock is on' : 'PIN changed'); onDone();
+      } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
+    };
+    return (
+      <form className="space-y-3" onSubmit={submit}>
+        {needCur && <PinField label="Current PIN" value={cur} onChange={setCur} autoFocus />}
+        {mode !== 'off' && <><PinField label="New PIN (4-8 digits)" value={p1} onChange={setP1} autoFocus={!needCur} /><PinField label="Repeat the new PIN" value={p2} onChange={setP2} /></>}
+        {mode === 'set' && <p className="text-xs text-slate-500">If you forget the PIN, the only way back in is to erase this device's data, so keep a backup.</p>}
+        {err && <p className="text-sm font-semibold t-expense" role="alert">{err}</p>}
+        <Button type="submit" className="w-full" disabled={busy} variant={mode === 'off' ? 'danger' : 'primary'}>{busy ? 'Checking…' : mode === 'off' ? 'Turn off app lock' : mode === 'set' ? 'Turn on app lock' : 'Change PIN'}</Button>
+      </form>
+    );
+  }
+
+  // Full-screen lock. Opaque (nothing behind it shows), keypad + keyboard, optional device unlock, back-off after wrong PINs.
+  function LockScreen({ lock, onUnlock }) {
+    const { data, setSetting } = useApp();
+    const root = useRef();
+    const [pin, setPin] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false), [shake, setShake] = useState(0), [forgot, setForgot] = useState(false);
+    const fails = data.settings.lockFails || { n: 0, until: 0 };
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => { if (!(fails.until > Date.now())) return; const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, [fails.until]);
+    const waitS = Math.max(0, Math.ceil(((fails.until || 0) - now) / 1000));
+    const len = lock.pinLength || 4;
+    const unlocked = async () => { await setSetting('lockFails', { n: 0, until: 0 }); onUnlock(); };
+    const submit = async (p) => {
+      setBusy(true);
+      const ok = await SecureVault.checkPin(p, lock).catch(() => false);
+      setBusy(false);
+      if (ok) return unlocked();
+      const n = (fails.n || 0) + 1;
+      const until = n >= 5 ? Date.now() + Math.min(900, 30 * 2 ** (n - 5)) * 1000 : 0; // 30 s, then doubling, at most 15 min
+      await setSetting('lockFails', { n, until });
+      setPin(''); setShake(Date.now());
+      setErr(n >= 5 ? 'Too many wrong PINs.' : `Wrong PIN · ${5 - n} more ${5 - n === 1 ? 'try' : 'tries'} before a wait`);
+    };
+    const press = (d) => { if (busy || waitS) return; setErr(''); const p = (pin + d).slice(0, len); setPin(p); if (p.length === len) submit(p); };
+    const back = () => setPin((p) => p.slice(0, -1));
+    useEffect(() => {
+      const k = (e) => { if (forgot) return; if (/^\d$/.test(e.key)) press(e.key); else if (e.key === 'Backspace') back(); };
+      addEventListener('keydown', k); return () => removeEventListener('keydown', k);
+    });
+    const device = async () => {
+      setErr('');
+      try { await SecureVault.verifyDevice(lock.device); await unlocked(); }
+      catch (e) { setErr(e && e.name === 'NotAllowedError' ? 'Device unlock was cancelled.' : (e && e.message) || 'Device unlock failed.'); }
+    };
+    const Key = ({ children, onClick, label }) => <button type="button" onClick={onClick} aria-label={label} disabled={!!waitS} className="press h-16 rounded-full text-2xl font-semibold text-white bg-white/[.07] ring-1 ring-inset ring-white/10 active:bg-white/15 disabled:opacity-40">{children}</button>;
+    return ReactDOM.createPortal(
+      <div ref={root} className="fixed inset-0 z-[100] flex flex-col items-center justify-center px-8 text-white" style={{ background: 'radial-gradient(80% 50% at 50% 0%, rgba(16,185,129,.18), transparent 60%), radial-gradient(70% 50% at 100% 100%, rgba(56,189,248,.14), transparent 60%), #05070e' }}
+        role="dialog" aria-modal="true" aria-label="Centric Wealth is locked" data-testid="lock-screen" data-lock-layer="">
+        <div className="w-16 h-16 rounded-[22px] grid place-items-center bg-gradient-to-br from-emerald-300 to-emerald-700 shadow-[0_14px_34px_-10px_rgba(16,185,129,.8)]"><Icon name="Lock" size={28} /></div>
+        <p className="mt-5 text-xl font-extrabold tracking-tight">Centric Wealth is locked</p>
+        <p className="text-sm text-slate-400 mt-1">{waitS ? `Try again in ${waitS >= 60 ? Math.ceil(waitS / 60) + ' min' : waitS + ' s'}` : 'Enter your PIN'}</p>
+        <div key={shake} className={cls('flex gap-3 mt-6', shake && 'animate-[shakeX_.4s_ease-in-out]')} aria-label={`${pin.length} of ${len} digits entered`}>
+          {Array.from({ length: len }, (_, i) => <span key={i} className={cls('w-3.5 h-3.5 rounded-full ring-1 ring-white/40 transition-colors', i < pin.length ? 'bg-white' : 'bg-transparent')} />)}
+        </div>
+        <p className="h-5 mt-3 text-sm font-semibold text-rose-300" role="alert">{err}</p>
+        <div className="grid grid-cols-3 gap-4 mt-3 w-full max-w-[280px]">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => <Key key={d} onClick={() => press(String(d))}>{d}</Key>)}
+          {lock.device ? <Key onClick={device} label="Unlock with Face ID or fingerprint"><Icon name="Fingerprint" size={26} className="mx-auto" /></Key> : <span />}
+          <Key onClick={() => press('0')}>0</Key>
+          <Key onClick={back} label="Delete digit"><Icon name="Delete" size={24} className="mx-auto" /></Key>
+        </div>
+        <button type="button" onClick={() => setForgot(true)} className="press mt-8 text-sm font-semibold text-slate-400">Forgot PIN?</button>
+        <Sheet open={forgot} title="Forgot your PIN?" onClose={() => setForgot(false)} container={root.current} z="z-[110]">
+          <p className="text-sm text-slate-500 mb-4">The PIN can't be recovered: nothing is stored anywhere else. To use the app again, erase this device's data, then restore a backup if you have one.</p>
+          <WipeFlow onCancel={() => setForgot(false)} />
+        </Sheet>
+      </div>,
+      document.body
+    );
+  }
+
+  // Two-step erase: what will be removed -> type ERASE. Deletes the database and the app's local storage, then reloads.
+  function WipeFlow({ onCancel }) {
+    const { data } = useApp();
+    const [step, setStep] = useState(1), [typed, setTyped] = useState(''), [offline, setOffline] = useState(false), [busy, setBusy] = useState(false);
+    const n = (k) => (data[k] || []).length;
+    const erase = async () => {
+      setBusy(true);
+      await DB.destroy();
+      if (offline) {
+        try { for (const k of await caches.keys()) if (k.startsWith('centric-wealth-')) await caches.delete(k); } catch (_) {}
+        try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch (_) {}
+      }
+      try { sessionStorage.setItem('cw.erased', '1'); } catch (_) {}
+      location.hash = ''; location.reload();
+    };
+    if (step === 1) return (
+      <div className="space-y-3" data-testid="wipe-step-1">
+        <div className="rounded-2xl bg-rose-500/[.07] ring-1 ring-inset ring-rose-500/20 p-3.5 text-sm">
+          <p className="font-semibold t-expense flex items-center gap-1.5"><Icon name="TriangleAlert" size={16} />This permanently removes from this device:</p>
+          <ul className="mt-2 space-y-1 text-slate-600 dark:text-slate-300 num">
+            <li>{n('transactions')} transactions (imported and logged)</li>
+            <li>{n('accounts')} accounts and savings funds, {n('debts')} cards and loans</li>
+            <li>{n('bills')} bills, {n('budgets')} budgets, category rules and settings</li>
+            <li>the app lock and privacy settings</li>
+          </ul>
+        </div>
+        <p className="text-xs text-slate-500">There is no copy anywhere else and it can't be undone. If you might want this data again, make a backup first.</p>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={offline} onChange={(e) => setOffline(e.target.checked)} className="w-4 h-4 accent-rose-600" />Also remove the offline copy of the app</label>
+        <div className="flex gap-2 pt-1">
+          <Button variant="secondary" className="flex-1" onClick={onCancel}>Cancel</Button>
+          <Button variant="danger" className="flex-1" onClick={() => setStep(2)}>Continue</Button>
+        </div>
+      </div>
+    );
+    return (
+      <form className="space-y-3" data-testid="wipe-step-2" onSubmit={(e) => { e.preventDefault(); if (typed.trim().toUpperCase() === 'ERASE') erase(); }}>
+        <p className="text-sm font-semibold">Last check: type <span className="num t-expense">ERASE</span> to delete everything.</p>
+        <input className={inputCls} value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="ERASE" autoCapitalize="characters" autoComplete="off" aria-label="Type ERASE to confirm" autoFocus />
+        <div className="flex gap-2">
+          <Button type="button" variant="secondary" className="flex-1" onClick={() => setStep(1)}>Back</Button>
+          <Button type="submit" variant="danger" className="flex-1" disabled={busy || typed.trim().toUpperCase() !== 'ERASE'}><Icon name="Trash2" size={16} />{busy ? 'Erasing…' : 'Erase everything'}</Button>
+        </div>
+      </form>
+    );
+  }
+
+  // Backup: encrypted (AES-256-GCM, passphrase) or plain JSON.
+  function BackupFlow({ onDone }) {
+    const { setSetting, toast } = useApp();
+    const [kind, setKind] = useState('encrypted'), [p1, setP1] = useState(''), [p2, setP2] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('');
+    const go = async (e) => {
+      e.preventDefault(); setErr('');
+      try {
+        if (kind === 'encrypted') { if (p1.length < 8) return setErr('Use at least 8 characters.'); if (p1 !== p2) return setErr('The passphrases don’t match.'); }
+        setBusy(true);
+        const data = await DB.exportAll();
+        const out = kind === 'encrypted' ? await SecureVault.encryptBackup(data, p1) : data;
+        download(`centric-wealth-backup-${todayISO()}${kind === 'encrypted' ? '.encrypted' : ''}.json`, JSON.stringify(out, null, kind === 'encrypted' ? 0 : 2), 'application/json');
+        await setSetting('lastBackup', todayISO());
+        toast(kind === 'encrypted' ? 'Encrypted backup saved' : 'Backup saved'); onDone();
+      } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
+    };
+    return (
+      <form className="space-y-3" onSubmit={go}>
+        <Segmented value={kind} onChange={setKind} options={[{ value: 'encrypted', label: 'Encrypted' }, { value: 'plain', label: 'Plain JSON' }]} />
+        {kind === 'encrypted' ? <>
+          <p className="text-xs text-slate-500">Locked with a passphrase (AES-256). Without it the file is unreadable, including by you, so store the passphrase somewhere safe.</p>
+          <Field label="Passphrase (8+ characters)"><input className={inputCls} type="password" autoComplete="new-password" value={p1} onChange={(e) => setP1(e.target.value)} aria-label="Backup passphrase" /></Field>
+          <Field label="Repeat passphrase"><input className={inputCls} type="password" autoComplete="new-password" value={p2} onChange={(e) => setP2(e.target.value)} aria-label="Repeat backup passphrase" /></Field>
+        </> : <p className="text-sm rounded-2xl bg-amber-500/10 ring-1 ring-inset ring-amber-500/25 p-3 text-amber-900 dark:text-amber-200 flex gap-2"><Icon name="TriangleAlert" size={16} className="shrink-0 mt-0.5" />Anyone who opens a plain backup can read all your finances. Prefer encrypted if the file will leave this device.</p>}
+        <p className="text-xs text-slate-500">Includes transactions, accounts, cards (with due dates), bills, budgets, category rules and preferences. The app lock stays on this device.</p>
+        {err && <p className="text-sm font-semibold t-expense" role="alert">{err}</p>}
+        <Button type="submit" className="w-full" disabled={busy}><Icon name="Download" size={16} />{busy ? (kind === 'encrypted' ? 'Encrypting…' : 'Saving…') : kind === 'encrypted' ? 'Download encrypted backup' : 'Download backup'}</Button>
+      </form>
+    );
+  }
+
+  // Restore: reads the file, decrypts if needed, validates and shows what's inside, then merges or replaces.
+  function RestoreFlow({ file, onDone }) {
+    const { reload, toast } = useApp();
+    const [raw, setRaw] = useState(null), [plain, setPlain] = useState(null), [pass, setPass] = useState(''), [mode, setMode] = useState('merge'), [busy, setBusy] = useState(false), [err, setErr] = useState('');
+    useEffect(() => {
+      (async () => {
+        try {
+          if (file.size > 60 * 1024 * 1024) throw new Error('This file is too large to be a backup.');
+          const json = JSON.parse(await file.text());
+          if (SecureVault.isEncryptedBackup(json)) setRaw(json); else { DB.validateBackup(json); setPlain(json); }
+        } catch (e) { setErr(e instanceof SyntaxError ? 'This isn’t a Centric Wealth backup file.' : e.message); }
+      })();
+    }, [file]);
+    const info = useMemo(() => { try { return plain ? DB.validateBackup(plain) : null; } catch (e) { return null; } }, [plain]);
+    const unlock = async (e) => { e.preventDefault(); setErr(''); setBusy(true); try { const d = await SecureVault.decryptBackup(raw, pass); DB.validateBackup(d); setPlain(d); } catch (ex) { setErr(ex.message); } finally { setBusy(false); } };
+    const restore = async () => {
+      setBusy(true); setErr('');
+      try { const n = await DB.importAll(plain, { replace: mode === 'replace' }); await reload(); toast(`Restored ${n} records`); onDone(); }
+      catch (ex) { setErr(ex.message); setBusy(false); }
+    };
+    const c = info ? info.counts : {};
+    return (
+      <div className="space-y-3" data-testid="restore-flow">
+        <p className="text-xs text-slate-500 truncate"><Icon name="FileJson" size={13} className="inline -mt-0.5 mr-1" />{file.name}</p>
+        {raw && !plain && <form className="space-y-3" onSubmit={unlock}>
+          <p className="text-sm">This backup is encrypted. Enter its passphrase.</p>
+          <input className={inputCls} type="password" autoComplete="off" value={pass} onChange={(e) => setPass(e.target.value)} aria-label="Backup passphrase" autoFocus />
+          <Button type="submit" className="w-full" disabled={busy || !pass}><Icon name="LockOpen" size={16} />{busy ? 'Decrypting…' : 'Unlock backup'}</Button>
+        </form>}
+        {info && <>
+          <div className="rounded-2xl bg-slate-900/[.04] dark:bg-white/[.05] p-3.5 text-sm num">
+            <p className="font-semibold">{plain.exportedAt ? `Backup from ${prettyDate(String(plain.exportedAt).slice(0, 10))}` : 'Backup'}</p>
+            <p className="text-slate-500 mt-1">{c.transactions || 0} transactions · {c.accounts || 0} accounts & funds · {c.debts || 0} cards & loans · {c.bills || 0} bills · {c.budgets || 0} budgets</p>
+            {info.skipped > 0 && <p className="text-amber-700 dark:text-amber-300 mt-1">{info.skipped} damaged or unknown entr{info.skipped === 1 ? 'y' : 'ies'} will be skipped.</p>}
+          </div>
+          <Segmented value={mode} onChange={setMode} options={[{ value: 'merge', label: 'Merge' }, { value: 'replace', label: 'Replace all' }]} />
+          <p className="text-xs text-slate-500">{mode === 'merge' ? 'Adds the backup to what’s here; entries with the same ID are overwritten by the backup.' : 'Deletes the data on this device first, then restores the backup. Your app lock stays as it is.'}</p>
+          <Button className="w-full" variant={mode === 'replace' ? 'danger' : 'primary'} disabled={busy} onClick={restore}>{busy ? 'Restoring…' : mode === 'replace' ? 'Replace with backup' : 'Merge backup'}</Button>
+        </>}
+        {err && <p className="text-sm font-semibold t-expense" role="alert">{err}</p>}
+      </div>
+    );
+  }
+
   /* ================================================================= APP */
-  const APP_VERSION = '1.18.0'; // keep in step with sw.js VERSION and the ?v= on the script tags
+  const APP_VERSION = '1.19.0'; // keep in step with sw.js VERSION and the ?v= on the script tags
   const TABS = [
     { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
     { id: 'transactions', label: 'Activity', aria: 'Transactions', icon: 'ArrowLeftRight' },
@@ -3564,11 +4124,17 @@
     }, [ready, recurring, data.debts, data.transactions, data.settings.notify, data.settings.reminderDays]);
 
     const currency = data.settings.currency || 'USD';
+    const privacy = !!data.settings.privacy;
     const fmt = useMemo(() => {
       const full = new Intl.NumberFormat(undefined, { style: 'currency', currency });
       const compact = new Intl.NumberFormat(undefined, { style: 'currency', currency, notation: 'compact', maximumFractionDigits: 1 });
+      if (privacy) { // "$••••••": keep the currency symbol where this locale puts it, hide the number (and its sign)
+        let masked = '', done = false;
+        for (const p of full.formatToParts(1)) { if (['integer', 'group', 'decimal', 'fraction'].includes(p.type)) { if (!done) { masked += MASK; done = true; } } else masked += p.value; }
+        return () => masked;
+      }
       return (n, short) => (short && Math.abs(n) >= 10000 ? compact : full).format(Number(n) || 0);
-    }, [currency]);
+    }, [currency, privacy]);
 
     const loadSample = useCallback(async () => {
       const s = buildSample();
@@ -3590,14 +4156,53 @@
       await store.save('debts', { ...orig, lastPaid: todayISO() });
       toast(`${c.name} marked as paid`);
     }, [data.debts, store, toast]);
-    const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install, recurring, recurringAction, openCards: setCardsUI, markCardPaid };
+    // ---- App lock: on launch, after `minutes` without use, and (optionally) whenever the app is hidden ----
+    const lockCfg = data.settings.lock && data.settings.lock.enabled && data.settings.lock.hash ? data.settings.lock : null;
+    const [locked, setLocked] = useState(null); // null until the data has loaded
+    useEffect(() => { if (ready && locked === null) setLocked(!!lockCfg); }, [ready]);
+    useEffect(() => { if (ready && !lockCfg) setLocked(false); }, [ready, !!lockCfg]);
+    const lockNow = useCallback(() => setLocked(true), []);
+    useEffect(() => {
+      if (!lockCfg) return;
+      let last = Date.now();
+      const bump = () => { last = Date.now(); };
+      const evs = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll'];
+      evs.forEach((e) => addEventListener(e, bump, { passive: true, capture: true }));
+      const idle = () => lockCfg.minutes > 0 && Date.now() - last >= lockCfg.minutes * 60000;
+      const timer = setInterval(() => { if (idle()) setLocked(true); }, 5000);
+      const vis = () => { if (document.visibilityState === 'hidden') { if (lockCfg.onHide) setLocked(true); } else if (idle()) setLocked(true); };
+      document.addEventListener('visibilitychange', vis);
+      return () => { evs.forEach((e) => removeEventListener(e, bump, { capture: true })); clearInterval(timer); document.removeEventListener('visibilitychange', vis); };
+    }, [lockCfg && lockCfg.minutes, lockCfg && lockCfg.onHide, !!lockCfg]);
+    // While locked, everything except the lock screen is inert (no focus, no taps, hidden from screen readers).
+    useEffect(() => {
+      if (!locked) return;
+      const els = [...document.body.children].filter((el) => !el.hasAttribute('data-lock-layer') && !el.hasAttribute('inert'));
+      els.forEach((el) => el.setAttribute('inert', ''));
+      return () => els.forEach((el) => el.removeAttribute('inert'));
+    }, [locked]);
+
+    // Ask the browser to keep this site's storage (not clear it under storage pressure) once there is data to keep.
+    const persistAsked = useRef(false);
+    useEffect(() => {
+      if (!ready || persistAsked.current || !data.transactions.length || !navigator.storage || !navigator.storage.persist) return;
+      persistAsked.current = true;
+      navigator.storage.persisted().then((p) => p || navigator.storage.persist()).catch(() => {});
+    }, [ready, data.transactions.length]);
+    useEffect(() => { try { if (sessionStorage.getItem('cw.erased')) { sessionStorage.removeItem('cw.erased'); toast('All data on this device was erased'); } } catch (_) {} }, []);
+
+    const setPrivacy = useCallback((on) => store.setSetting('privacy', !!on), [store]);
+    const ctx = { ...store, fmt, toast, go, loadSample, installPrompt, install, recurring, recurringAction, openCards: setCardsUI, markCardPaid,
+      privacy, setPrivacy, lockOn: !!lockCfg, lockNow };
 
     if (!ready) return <SkeletonScreen />;
     if (error) return <div className="p-6"><Card className="p-4"><p className="font-semibold text-rose-600">Storage unavailable</p><p className="text-sm text-slate-500 mt-1">{error}. Private-browsing modes in some browsers block IndexedDB.</p></Card></div>;
 
+    const hidden = !!lockCfg && locked !== false;
     return (
       <AppCtx.Provider value={ctx}>
-        <div className="min-h-full max-w-lg mx-auto">
+        {hidden && <LockScreen lock={lockCfg} onUnlock={() => setLocked(false)} />}
+        <div className="min-h-full max-w-lg mx-auto" style={hidden ? { visibility: 'hidden' } : undefined}>
           {!online && <div className="pt-safe fade-in"><div className="mx-4 mt-2 rounded-full bg-slate-900/85 dark:bg-white/10 text-white text-xs font-semibold text-center py-1.5 inline-flex w-[calc(100%-2rem)] justify-center gap-1.5 items-center"><Icon name="WifiOff" size={13} />Offline — everything still works</div></div>}
           <main className={cls('px-4 pt-safe', tab === 'dashboard' || tab === 'transactions' ? 'pb-48' : 'pb-28')}>
             <div className="pt-3 stagger" key={tab + (tab === 'budget' ? '/' + sub : '')}>
